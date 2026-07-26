@@ -49,6 +49,11 @@ npx cloudflared tunnel --url http://localhost:5173
 npx localtunnel --port 5173
 ```
 
+Your choice is remembered. Tilt cannot be switched back on at page load — the
+permission API requires a user gesture — so the game restores it on the tap
+that starts your next run, and falls back to the stick (clearing the
+preference) if that fails.
+
 Whatever attitude you are holding when tilt is enabled becomes "level", and
 **Pause → Re-centre tilt** resets it. Axes are rotated by the current screen
 orientation, so landscape does not swap or invert the controls, and rotating

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import { Engine } from '../core/Engine';
-import { Input } from '../core/Input';
+import { Input, type ControlMode, type TiltResult } from '../core/Input';
 import { Audio } from '../core/Audio';
 import { UI } from '../ui/UI';
 
@@ -136,14 +136,13 @@ export class Game {
     this.input.release();
     this.ui.showTitle(
       {
-        onStart: () => {
-          void this.audio.start();
-          this.beginLevel(Math.min(this.progress.unlocked, LEVELS.length - 1));
-        },
+        onStart: () => void this.launch(Math.min(this.progress.unlocked, LEVELS.length - 1)),
         onLevels: () => this.showLevelSelect(),
         onToggleControls: () => void this.toggleControls(),
       },
-      this.input.mode,
+      // The saved preference, not the live mode: tilt shows as selected before
+      // it has actually been switched on, because switching it on needs a tap.
+      this.progress.controls,
       this.input.tiltAvailable,
       this.tiltNote,
     );
@@ -159,33 +158,48 @@ export class Game {
       LEVELS.map((l) => ({ id: l.id, name: l.name })),
       this.progress.unlocked,
       this.progress.bests,
-      (index) => {
-        void this.audio.start();
-        this.beginLevel(index);
-      },
+      (index) => void this.launch(index),
       () => this.showMenu(),
     );
   }
 
-  private async toggleControls(): Promise<void> {
-    if (this.input.mode === 'tilt') {
-      this.input.setMode('stick');
-      this.tiltNote = '';
-      if (this.state === 'menu') this.showMenu();
-      return;
+  /**
+   * Starts a course, restoring tilt first if that is what the player picked
+   * last time.
+   *
+   * This exists because the motion permission cannot be re-granted at load:
+   * it needs a user gesture. The tap that starts the run is that gesture, so
+   * neither `requestTilt()` nor `audio.start()` may sit behind an await --
+   * both reach their gesture-sensitive call synchronously.
+   */
+  private async launch(index: number): Promise<void> {
+    const restoringTilt = this.progress.controls === 'tilt' && this.input.mode !== 'tilt';
+    const tiltPending = restoringTilt ? this.input.requestTilt() : null;
+    void this.audio.start();
+
+    if (tiltPending) {
+      this.applyTiltResult(await tiltPending);
+      // A failed restore falls back to the stick; do not keep asking forever.
+      if (this.input.mode !== 'tilt') this.setPreferredControls('stick');
     }
 
-    // requestTilt() must see the user gesture, so it is called without any
-    // awaits in front of it.
-    const result = await this.input.requestTilt();
+    this.beginLevel(index);
+  }
 
+  private setPreferredControls(mode: ControlMode): void {
+    this.progress.controls = mode;
+    saveProgress(this.progress);
+  }
+
+  /** Applies a tilt request outcome: mode, explanation, and toast. */
+  private applyTiltResult(result: TiltResult): void {
     switch (result) {
       case 'granted':
         this.input.setMode('tilt');
         this.input.calibrate();
         this.tiltNote = 'Tilt on. However you are holding the phone right now is level.';
         this.ui.toast('Tilt enabled', '#58f7ff');
-        break;
+        return;
       case 'denied':
         // Note: there is no "Motion & Orientation Access" switch to send people
         // to any more -- Apple removed it. Safari now remembers the refusal per
@@ -212,17 +226,30 @@ export class Game {
         break;
     }
 
-    if (result !== 'granted') {
+    this.input.setMode('stick');
+    this.ui.toast('Tilt unavailable', '#ff4d8d');
+    // Surface the raw reason too -- "denied" covers several distinct causes
+    // and the exact one is what makes it fixable.
+    if (this.input.lastTiltError) {
+      this.tiltNote += `  [${result}: ${this.input.lastTiltError}]`;
+    }
+  }
+
+  private async toggleControls(): Promise<void> {
+    if (this.progress.controls === 'tilt') {
       this.input.setMode('stick');
-      this.ui.toast('Tilt unavailable', '#ff4d8d');
-      // Surface the raw reason too -- "denied" covers several distinct causes
-      // and the exact one is what makes it fixable.
-      if (this.input.lastTiltError) {
-        this.tiltNote += `  [${result}: ${this.input.lastTiltError}]`;
-      }
+      this.setPreferredControls('stick');
+      this.tiltNote = '';
+      if (this.state === 'menu') this.showMenu();
+      return;
     }
 
-    // Redraw the title so the toggle label and the note match.
+    // requestTilt() must see the user gesture, so it is called without any
+    // awaits in front of it.
+    this.applyTiltResult(await this.input.requestTilt());
+    this.setPreferredControls(this.input.mode);
+
+    // Redraw the title so the selector and the note match.
     if (this.state === 'menu') this.showMenu();
   }
 
