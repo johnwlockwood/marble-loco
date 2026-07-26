@@ -9,7 +9,10 @@ There is no `MeshStandardMaterial` anywhere, no cubemap render target, no
 The marble mirrors the live sky by evaluating the same procedural `skyColor()`
 the skybox uses, with the reflection vector instead of the view vector.
 
+**▶ [Play it](https://johnwlockwood.github.io/marble-loco/)** — best on a phone.
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Deploy](https://github.com/johnwlockwood/marble-loco/actions/workflows/deploy.yml/badge.svg)](https://github.com/johnwlockwood/marble-loco/actions/workflows/deploy.yml)
 
 ```bash
 npm install
@@ -222,6 +225,29 @@ Levels are data. `game/levels.ts` has helpers (`plat`, `ramp`, `mover`,
 — run-merging identical tiles along X to keep both vertices and colliders down.
 The two mazes were machine-generated (recursive backtracker + braiding) and
 flood-fill verified solvable.
+
+## Deployment
+
+Every push to `main` typechecks, builds and publishes to GitHub Pages via
+`.github/workflows/deploy.yml`. Live at
+**https://johnwlockwood.github.io/marble-loco/**.
+
+Two things make that work, and both are easy to break:
+
+- `base: './'` in the Vite config. A Pages *project* site is served from
+  `/marble-loco/`, and an absolute base would 404 every asset there.
+- HTTPS, which Pages provides automatically. This is not cosmetic — iOS
+  refuses the motion sensors outside a secure context, so tilt controls do not
+  exist without it.
+
+Production sourcemaps are off; the map is ~2.9MB against a 604KB bundle. Build
+with `SOURCEMAP=1 npm run build` when you need a readable stack trace from a
+real device.
+
+To put it on your own domain: add the domain in the repo's Pages settings, then
+point DNS at GitHub — an `ALIAS`/`ANAME` at the apex, or a `CNAME` to
+`johnwlockwood.github.io` for a subdomain. Pages provisions the certificate.
+Nothing in the build needs changing; `base: './'` works at the root too.
 
 ## License
 
