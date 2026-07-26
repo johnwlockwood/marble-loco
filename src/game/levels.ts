@@ -55,14 +55,43 @@ function wallZ(x: number, z: number, len: number, y = 0, h = 2.2): BlockDef {
   return { p: [x, y + h / 2, z], s: [0.9, h, len], type: S.Wall };
 }
 
-/** Perimeter rails around a rectangular deck. */
-function rails(x: number, z: number, w: number, d: number, y = 0, h = 2.0): BlockDef[] {
-  return [
-    wallZ(x - w / 2 + 0.45, z, d, y, h),
-    wallZ(x + w / 2 - 0.45, z, d, y, h),
-    wallX(x, z - d / 2 + 0.45, w, y, h),
-    wallX(x, z + d / 2 - 0.45, w, y, h),
-  ];
+/** Which edge of a deck a rail sits on. 'near' is +z, towards the camera. */
+type Side = 'left' | 'right' | 'far' | 'near';
+
+/**
+ * Perimeter rails around a rectangular deck.
+ *
+ * `open` omits sides. A closed ring around a deck the player has to enter or
+ * leave is a trap: the rails are 0.9 wide and up to 2.6 tall, and the marble
+ * is 1.16 across, so it can neither pass through them nor balance on top.
+ * Every deck that is part of the route needs its entry and exit opened.
+ */
+function rails(
+  x: number, z: number, w: number, d: number, y = 0, h = 2.0, open: Side[] = [],
+): BlockDef[] {
+  const out: BlockDef[] = [];
+  if (!open.includes('left')) out.push(wallZ(x - w / 2 + 0.45, z, d, y, h));
+  if (!open.includes('right')) out.push(wallZ(x + w / 2 - 0.45, z, d, y, h));
+  if (!open.includes('far')) out.push(wallX(x, z - d / 2 + 0.45, w, y, h));
+  if (!open.includes('near')) out.push(wallX(x, z + d / 2 - 0.45, w, y, h));
+  return out;
+}
+
+/**
+ * A rail with a doorway in it: two segments flanking a gap of `gapWidth`
+ * centred on `gapX`. Used where a wide deck funnels into a narrow exit.
+ */
+function railWithGap(
+  x: number, z: number, w: number, gapX: number, gapWidth: number, y = 0, h = 2.0,
+): BlockDef[] {
+  const leftEnd = gapX - gapWidth / 2;
+  const rightStart = gapX + gapWidth / 2;
+  const out: BlockDef[] = [];
+  const leftLen = leftEnd - (x - w / 2);
+  const rightLen = (x + w / 2) - rightStart;
+  if (leftLen > 0.1) out.push(wallX(x - w / 2 + leftLen / 2, z, leftLen, y, h));
+  if (rightLen > 0.1) out.push(wallX(rightStart + rightLen / 2, z, rightLen, y, h));
+  return out;
 }
 
 /** A pad that sits proud of the deck. */
@@ -224,13 +253,13 @@ const l1Deck: BlockDef[] = [
   // Rise to the finish.
   ramp([0, 0, -26], [0, 2.4, -31], 9),
   plat(0, -35.5, 11, 9, 2.4),
-  ...rails(0, -35.5, 11, 9, 2.4, 1.6),
+  ...rails(0, -35.5, 11, 9, 2.4, 1.6, ['near']),
   goal(0, -35.5, 2.4),
 ];
 
 const l2Deck: BlockDef[] = [
   plat(0, 8, 13, 14),
-  ...rails(0, 8, 13, 14, 0, 1.6),
+  ...rails(0, 8, 13, 14, 0, 1.6, ['far']),
   // Gap 1: short, take it at a roll.
   plat(0, -5, 11, 10),
   // Gap 2: wider -- the boost strip is the answer.
@@ -245,7 +274,7 @@ const l2Deck: BlockDef[] = [
   // Narrow catwalk to the finish.
   plat(2, -44, 3.4, 14),
   plat(2, -55, 12, 10),
-  ...rails(2, -55, 12, 10, 0, 1.6),
+  ...rails(2, -55, 12, 10, 0, 1.6, ['near']),
   goal(2, -56),
 ];
 
@@ -282,7 +311,7 @@ const l4Deck: BlockDef[] = (() => {
   const dirs: Array<[number, number]> = [[0, -1], [-1, 0], [0, 1], [1, 0]];
 
   b.push(plat(0, 8, 12, 12, 0));
-  b.push(...rails(0, 8, 12, 12, 0, 1.6));
+  b.push(...rails(0, 8, 12, 12, 0, 1.6, ['far']));
 
   for (let i = 0; i < 8; i++) {
     const [dx, dz] = dirs[i % 4];
@@ -312,7 +341,7 @@ const l4Deck: BlockDef[] = (() => {
 
 const l5Deck: BlockDef[] = [
   plat(0, 8, 12, 12),
-  ...rails(0, 8, 12, 12, 0, 1.6),
+  ...rails(0, 8, 12, 12, 0, 1.6, ['far']),
   // Long ice straight with a kink -- carry too much speed and you overshoot.
   plat(0, -8, 9, 22, 0, { type: S.Ice }),
   wallZ(-4.9, -8, 22),
@@ -327,13 +356,13 @@ const l5Deck: BlockDef[] = [
   // Narrow ice bridge over nothing.
   plat(-9, -54, 3.6, 12, 0, { type: S.Ice }),
   plat(-9, -64, 12, 10),
-  ...rails(-9, -64, 12, 10, 0, 1.6),
+  ...rails(-9, -64, 12, 10, 0, 1.6, ['near']),
   goal(-9, -65),
 ];
 
 const l6Deck: BlockDef[] = [
   plat(0, 8, 12, 12),
-  ...rails(0, 8, 12, 12, 0, 1.6),
+  ...rails(0, 8, 12, 12, 0, 1.6, ['far']),
   // Shuttle across the first void.
   mover(0, -2, 7, 7, 0, [0, 0, -14], 5.0),
   plat(0, -22, 12, 8),
@@ -344,14 +373,14 @@ const l6Deck: BlockDef[] = [
   // A lift that drops you to a lower shelf.
   mover(0, -52, 7, 7, 0, [0, -6, -52], 6.0, 0.25),
   plat(0, -64, 14, 10, -6),
-  ...rails(0, -64, 14, 10, -6, 1.6),
+  ...rails(0, -64, 14, 10, -6, 1.6, ['near']),
   goal(0, -65, -6),
 ];
 
 const l7Deck: BlockDef[] = (() => {
   const b: BlockDef[] = [
     plat(0, 8, 12, 12),
-    ...rails(0, 8, 12, 12, 0, 1.6),
+    ...rails(0, 8, 12, 12, 0, 1.6, ['far']),
   ];
   // A path of crumbling tiles: stop moving and you go through the floor.
   const path: Array<[number, number]> = [
@@ -364,17 +393,21 @@ const l7Deck: BlockDef[] = (() => {
   b.push(plat(3, -22, 4.4, 4.4, 0, { type: S.Normal }));
   b.push(checkpoint(3, -22));
   b.push(plat(0, -62, 13, 11));
-  b.push(...rails(0, -62, 13, 11, 0, 1.6));
+  b.push(...rails(0, -62, 13, 11, 0, 1.6, ['near']));
   b.push(goal(0, -63));
   return b;
 })();
 
 const l8Deck: BlockDef[] = [
   plat(0, 8, 12, 12),
-  ...rails(0, 8, 12, 12, 0, 1.6),
+  ...rails(0, 8, 12, 12, 0, 1.6, ['far']),
   // Pinball table: bumpers scattered on a wide bowl with walls.
   plat(0, -20, 30, 44),
-  ...rails(0, -20, 30, 44, 0, 2.6),
+  // Table walls with a doorway at each end -- in from the start deck, out to
+  // the exit chute. A closed ring here walled the goal off entirely.
+  ...rails(0, -20, 30, 44, 0, 2.6, ['near', 'far']),
+  ...railWithGap(0, 1.55, 30, 0, 12, 0, 2.6),
+  ...railWithGap(0, -41.55, 30, 0, 6, 0, 2.6),
   { p: [-7, 1.4, -8], s: [3, 2.8, 3], type: S.Bumper },
   { p: [6, 1.4, -14], s: [3, 2.8, 3], type: S.Bumper },
   { p: [-4, 1.4, -22], s: [3, 2.8, 3], type: S.Bumper },
@@ -420,7 +453,7 @@ const l9 = fromGrid([
 const l10Deck: BlockDef[] = (() => {
   const b: BlockDef[] = [
     plat(0, 8, 12, 12, 40),
-    ...rails(0, 8, 12, 12, 40, 1.6),
+    ...rails(0, 8, 12, 12, 40, 1.6, ['far']),
   ];
   // A long descent: alternating ramps, hazards and a couple of movers.
   let y = 40;
@@ -444,7 +477,7 @@ const l10Deck: BlockDef[] = (() => {
     x = nx; y = ny; z = nz - 8.5;
   }
   b.push(plat(x, z - 8, 16, 14, y));
-  b.push(...rails(x, z - 8, 16, 14, y, 2.0));
+  b.push(...rails(x, z - 8, 16, 14, y, 2.0, ['near']));
   b.push(goal(x, z - 9, y));
   return b;
 })();

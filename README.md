@@ -175,8 +175,29 @@ src/
   ui/         screens, HUD, touch pads
 ```
 
+### Checking a level is beatable
+
+`tools/reachability-audit.js` answers the only question that matters: can the
+marble get from spawn to goal? Run a dev build, open the console, paste the
+file, then `await audit.all()`. `audit.map(i)` prints an ASCII map of what is
+reachable, which is how you find where a route breaks.
+
+Run it after touching level geometry. It builds a height field by raycasting
+onto every collider, sweeps moving platforms along their paths, discards
+surfaces narrower than the marble, and flood-fills with ballistic gap jumps
+that have to clear whatever they fly over.
+
+Two traps it exists to catch, both of which shipped:
+
+- `rails()` builds a **closed** ring. Around a deck on the route that is a
+  cage — rails are 0.9 wide and the marble is 1.16, so it can neither pass
+  through nor balance on top. Pass `open` sides, or use `railWithGap()`.
+- Jump clearance is only **2.15** under the ball. Anything taller than that is
+  a wall, not an obstacle, and bumpers do not help — they throw you sideways,
+  reaching barely 1.0 of lift even at full speed.
+
 Levels are data. `game/levels.ts` has helpers (`plat`, `ramp`, `mover`,
-`boost`, `rails`) plus `fromGrid()`, which compiles an ASCII map — `#` wall,
+`boost`, `rails`, `railWithGap`) plus `fromGrid()`, which compiles an ASCII map — `#` wall,
 `I` ice, `X` crumble, `O` bumper, `~` sticky, `S`/`G`/`C` spawn/goal/checkpoint
 — run-merging identical tiles along X to keep both vertices and colliders down.
 The two mazes were machine-generated (recursive backtracker + braiding) and
