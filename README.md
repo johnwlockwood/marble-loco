@@ -143,15 +143,28 @@ Aimed at a 60fps budget on A-series hardware:
 Custom, in `physics/Physics.ts` — a sphere against oriented boxes, stepped at a
 fixed 120Hz with an accumulator.
 
-- Impulse resolution with Coulomb friction and per-surface restitution.
+- **Two friction coefficients, and the difference is the whole feel.** A sphere
+  rolling without slipping has a contact point with no relative velocity, so
+  kinetic friction does no work on it — what slows a real marble is *rolling
+  resistance*, one to two orders of magnitude smaller. Spin here is derived
+  from linear velocity rather than integrated as angular momentum, so the
+  marble is rolling by construction. Contacts blend between `rolling` and
+  Coulomb `friction` by impact speed: resting contact coasts, real collisions
+  scrub. Applying Coulomb friction to everything made the marble decelerate at
+  μg ≈ 21 u/s² — a sliding block — and no ramp in the game was climbable.
+  It now loses ~4 u/s² at speed, and momentum is something you manage.
 - Contacts are solved in the *surface's* frame, so moving platforms carry the
   marble exactly (measured: ball velocity matches platform velocity to 0.01).
 - Restitution is suppressed below 1.6 u/s, which is what stops a resting ball
-  buzzing on a flat floor.
+  buzzing on a flat floor. The rolling/Coulomb blend starts above 0.6 u/s so
+  the gravity a resting ball accumulates between substeps does not read as an
+  impact — that alone was trebling the rolling resistance.
 - Steering acceleration is projected onto the ground plane so you drive *up* a
   ramp instead of into it; air control is cut to 32%.
 - Coyote time (0.12s) on jumps.
-- Rolling spin is integrated from ω = (n × v)/r for the visual only.
+- Rolling spin is integrated from ω = (n × v)/r for the visual only. Verified
+  by deriving ω back out of the orientation each frame and checking the contact
+  point is stationary — which is what "rolling without slipping" means.
 
 Ramps are authored as two surface endpoints and the tilt is solved for
 (`ramp()` in `game/levels.ts`); a 2.4-over-5 ramp measures back as a 25.6°

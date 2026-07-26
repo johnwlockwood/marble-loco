@@ -2,28 +2,60 @@ import * as THREE from 'three';
 import { SurfaceType } from '../render/SurfaceMaterial';
 
 /**
- * How each surface kind behaves. Friction is the Coulomb coefficient applied to
- * the normal impulse; restitution is bounciness.
+ * How each surface kind behaves.
+ *
+ * There are two friction coefficients, and the distinction is the whole reason
+ * the marble rolls rather than drags.
+ *
+ * A sphere that is rolling without slipping has a contact point with (almost)
+ * no relative velocity, so kinetic friction does no work on it -- what slows a
+ * real marble is *rolling resistance*, which is one to two orders of magnitude
+ * smaller. Spin here is derived from linear velocity rather than integrated as
+ * angular momentum, so the marble is rolling by construction and `rolling` is
+ * what should apply at a sustained contact.
+ *
+ * `friction` is still correct for a genuine impact, where the ball really does
+ * scrub against the surface. `step()` blends between the two by impact speed.
  */
 export interface SurfaceProps {
+  /** Coulomb coefficient, for real impacts. */
   friction: number;
+  /** Rolling resistance, for sustained contact. Deceleration is this times g. */
+  rolling: number;
   restitution: number;
   /** Multiplies the player's steering authority while in contact. */
   control: number;
 }
 
 export const SURFACE_PROPS: Record<SurfaceType, SurfaceProps> = {
-  [SurfaceType.Normal]: { friction: 0.62, restitution: 0.22, control: 1.0 },
-  [SurfaceType.Ice]: { friction: 0.035, restitution: 0.12, control: 0.28 },
-  [SurfaceType.Sticky]: { friction: 1.6, restitution: 0.02, control: 0.75 },
-  [SurfaceType.Boost]: { friction: 0.4, restitution: 0.1, control: 1.0 },
-  [SurfaceType.Crumble]: { friction: 0.7, restitution: 0.15, control: 1.0 },
-  [SurfaceType.Goal]: { friction: 0.7, restitution: 0.1, control: 1.0 },
-  [SurfaceType.Kill]: { friction: 0.6, restitution: 0.3, control: 1.0 },
-  [SurfaceType.Bumper]: { friction: 0.25, restitution: 1.55, control: 1.0 },
-  [SurfaceType.Wall]: { friction: 0.32, restitution: 0.42, control: 1.0 },
-  [SurfaceType.Checkpoint]: { friction: 0.62, restitution: 0.2, control: 1.0 },
+  [SurfaceType.Normal]: { friction: 0.62, rolling: 0.055, restitution: 0.22, control: 1.0 },
+  [SurfaceType.Ice]: { friction: 0.035, rolling: 0.010, restitution: 0.12, control: 0.30 },
+  // Sticky is the brake: high enough to actually scrub off speed.
+  [SurfaceType.Sticky]: { friction: 1.6, rolling: 0.55, restitution: 0.02, control: 0.85 },
+  [SurfaceType.Boost]: { friction: 0.4, rolling: 0.03, restitution: 0.1, control: 1.0 },
+  [SurfaceType.Crumble]: { friction: 0.7, rolling: 0.06, restitution: 0.15, control: 1.0 },
+  [SurfaceType.Goal]: { friction: 0.7, rolling: 0.06, restitution: 0.1, control: 1.0 },
+  [SurfaceType.Kill]: { friction: 0.6, rolling: 0.055, restitution: 0.3, control: 1.0 },
+  [SurfaceType.Bumper]: { friction: 0.25, rolling: 0.04, restitution: 1.55, control: 1.0 },
+  [SurfaceType.Wall]: { friction: 0.32, rolling: 0.05, restitution: 0.42, control: 1.0 },
+  [SurfaceType.Checkpoint]: { friction: 0.62, rolling: 0.055, restitution: 0.2, control: 1.0 },
 };
+
+/**
+ * Normal-approach speed at which a contact counts as a full impact rather than
+ * resting contact. Also the speed below which bounces are suppressed.
+ */
+const IMPACT_SPEED = 1.6;
+
+/**
+ * Below this normal speed a contact is pure rolling.
+ *
+ * A ball resting on the floor still shows a small approach speed every substep,
+ * because gravity accumulates g*dt = 34/120 ~ 0.28 between solves. Blending
+ * straight from zero would read that as a 17% impact and quietly trebled the
+ * rolling resistance -- the marble was still dragging, just less obviously.
+ */
+const RESTING_BAND = 0.6;
 
 /** Scratch, shared by Collider.refresh() -- which runs for every mover, every frame. */
 const _rotMatrix = new THREE.Matrix4();
@@ -256,16 +288,29 @@ export function step(
 
       // Do not bounce off tiny residual velocities -- that is what makes a ball
       // buzz forever on a flat floor.
-      const restitution = impactSpeed < 1.6 ? 0 : props.restitution;
+      const restitution = impactSpeed < IMPACT_SPEED ? 0 : props.restitution;
       const j = -(1 + restitution) * vn;
       _rel.addScaledVector(_normal, j);
 
-      // Coulomb friction on the tangential component.
+      // Blend rolling resistance into Coulomb friction by how hard the contact
+      // is. A ball sitting on the floor only accumulates a gravity-sized normal
+      // impulse per substep, so it lands at the rolling end and coasts; a real
+      // collision lands at the Coulomb end and scrubs.
+      //
+      // Using props.friction here for everything is what made the marble
+      // decelerate at mu*g -- about 21 u/s^2, a sliding block rather than a
+      // rolling ball, killing every bit of momentum the game is built on.
+      const t = (impactSpeed - RESTING_BAND) / (IMPACT_SPEED - RESTING_BAND);
+      const clamped = Math.min(Math.max(t, 0), 1);
+      const hardness = clamped * clamped * (3 - 2 * clamped); // smoothstep
+      const mu = props.rolling + (props.friction - props.rolling) * hardness;
+
       _tangent.copy(_rel).addScaledVector(_normal, -_rel.dot(_normal));
       const tLen = _tangent.length();
       if (tLen > 1e-5) {
-        const maxFriction = props.friction * j;
-        const applied = Math.min(tLen, maxFriction);
+        // Clamped so friction can never reverse the motion, which is also what
+        // lets the ball actually come to rest instead of jittering.
+        const applied = Math.min(tLen, mu * j);
         _rel.addScaledVector(_tangent, -applied / tLen);
       }
 

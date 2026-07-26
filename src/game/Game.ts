@@ -22,9 +22,19 @@ type State = 'menu' | 'levels' | 'playing' | 'paused' | 'complete' | 'failed';
 const UP = new THREE.Vector3(0, 1, 0);
 
 const GRAVITY = -34;
-const ACCEL = 42;
-const MAX_SPEED = 34;
-const AIR_DRAG = 0.18;
+/**
+ * Steering authority. Lower than it was: once the marble actually holds its
+ * momentum, high authority lets you cancel it on a whim and the course stops
+ * being about managing speed.
+ */
+const ACCEL = 30;
+const MAX_SPEED = 30;
+/**
+ * Velocity-proportional damping. Not really air resistance -- it is the speed
+ * limiter that keeps a nearly frictionless marble from running away, and it
+ * has to stay gentle or it becomes the drag we just removed.
+ */
+const AIR_DRAG = 0.12;
 const JUMP_SPEED = 12.5;
 /** How long after leaving the ground a jump still counts. */
 const COYOTE_TIME = 0.12;
