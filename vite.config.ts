@@ -7,11 +7,17 @@ import basicSsl from '@vitejs/plugin-basic-ssl';
 const https = process.env.HTTPS === '1';
 
 export default defineConfig({
+  // Relative, not absolute. This is what lets the built site run from a
+  // subpath -- a GitHub Pages project site is served at /marble-loco/, and an
+  // absolute base would 404 every asset there.
   base: './',
   plugins: https ? [basicSsl()] : [],
   server: { host: true, port: 5173 },
   build: {
     target: 'es2020',
-    sourcemap: true,
+    // Off by default: the map is ~2.9MB against a 604KB bundle, so it would be
+    // five sixths of every deploy. Build with SOURCEMAP=1 when you need a
+    // readable stack trace from a real device.
+    sourcemap: process.env.SOURCEMAP === '1',
   },
 });
