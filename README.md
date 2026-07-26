@@ -4,6 +4,13 @@ A Marble Madness–style arcade game for the iPhone, built on Three.js with a
 hand-written shader pipeline. Ten courses, tilt or thumbstick controls, no
 asset files — every surface, sound and particle is generated at runtime.
 
+There is no `MeshStandardMaterial` anywhere, no cubemap render target, no
+`EffectComposer`, no physics library, and not a single image or audio file.
+The marble mirrors the live sky by evaluating the same procedural `skyColor()`
+the skybox uses, with the reflection vector instead of the view vector.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 ```bash
 npm install
 npm run dev          # stick controls; plain http
@@ -215,3 +222,9 @@ Levels are data. `game/levels.ts` has helpers (`plat`, `ramp`, `mover`,
 — run-merging identical tiles along X to keep both vertices and colliders down.
 The two mazes were machine-generated (recursive backtracker + braiding) and
 flood-fill verified solvable.
+
+## License
+
+[MIT](LICENSE) © John Lockwood.
+
+Three.js is BSD-3-Clause and is the only runtime dependency.

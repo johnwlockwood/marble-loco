@@ -4,6 +4,26 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Marble Madness style arcade game for iPhone, built on Three.js with a fully custom shader pipeline.",
+  "license": "MIT",
+  "author": "John Lockwood",
+  "homepage": "https://github.com/johnwlockwood/marble-loco#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/johnwlockwood/marble-loco.git"
+  },
+  "bugs": {
+    "url": "https://github.com/johnwlockwood/marble-loco/issues"
+  },
+  "keywords": [
+    "three.js",
+    "webgl",
+    "glsl",
+    "shaders",
+    "game",
+    "marble-madness",
+    "ios",
+    "mobile"
+  ],
   "scripts": {
     "dev": "vite --host",
     "dev:https": "HTTPS=1 vite --host",
