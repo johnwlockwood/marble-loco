@@ -9,8 +9,14 @@ export type ControlMode = 'tilt' | 'stick';
 export type TiltResult =
   /** Working: permission held and events are arriving. */
   | 'granted'
-  /** The permission prompt was declined (or previously declined). */
+  /** The permission prompt was declined (or previously declined for this origin). */
   | 'denied'
+  /**
+   * The request lost its transient activation -- our bug, not the player's
+   * choice. Kept separate because "denied" sends people into Settings looking
+   * for a permission they never actually refused.
+   */
+  | 'no-gesture'
   /** No DeviceOrientationEvent at all -- desktop without a sensor. */
   | 'unsupported'
   /** Served over plain http. iOS refuses the sensors outside a secure context. */
@@ -40,6 +46,8 @@ export class Input {
   jumpHeld = false;
   tiltAvailable = false;
   tiltGranted = false;
+  /** Raw reason the last tilt request failed, for on-screen diagnostics. */
+  lastTiltError = '';
 
   private readonly stick = new THREE.Vector2();
   private readonly keys = new THREE.Vector2();
@@ -118,9 +126,17 @@ export class Input {
       try {
         // Called before the first await, so we are still inside the gesture.
         const result = await ctor.requestPermission();
-        if (result !== 'granted') return 'denied';
-      } catch {
-        return 'denied';
+        if (result !== 'granted') {
+          this.lastTiltError = `requestPermission returned "${result}"`;
+          return 'denied';
+        }
+      } catch (err) {
+        const name = (err as DOMException | undefined)?.name ?? String(err);
+        this.lastTiltError = name;
+        // NotAllowedError here means the call did not carry transient
+        // activation, which is a completely different problem from the player
+        // tapping "Don't Allow".
+        return name === 'NotAllowedError' ? 'no-gesture' : 'denied';
       }
     }
     // Elsewhere there is no prompt -- but permission is not the same as data,

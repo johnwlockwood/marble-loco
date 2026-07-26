@@ -91,10 +91,7 @@ export class UI {
   }
 
   onPause(handler: () => void): void {
-    this.pauseBtn.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
-      handler();
-    });
+    this.pauseBtn.addEventListener('click', () => handler());
   }
 
   /* ------------------------------------------------------------- overlays */
@@ -111,12 +108,17 @@ export class UI {
 
   private button(label: string, onClick: () => void, ghost = false): HTMLButtonElement {
     const b = el('button', ghost ? 'btn ghost' : 'btn', label);
-    // pointerdown, not click: on iOS click has a perceptible delay and this is
-    // also the gesture we need for the audio/motion permission prompts.
-    b.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
-      onClick();
-    });
+    // `click`, deliberately, not `pointerdown`.
+    //
+    // Safari's motion-permission prompt requires transient activation and
+    // rejects with NotAllowedError without it; pointerdown plus
+    // preventDefault() is precisely the combination that loses it. The old
+    // 300ms tap delay is not a concern -- the viewport is width=device-width
+    // and non-zoomable, so iOS dispatches click immediately.
+    //
+    // The game pads (stick, jump) still use pointer events: they need the
+    // latency and they never trigger a permission prompt.
+    b.addEventListener('click', () => onClick());
     return b;
   }
 
@@ -186,12 +188,7 @@ export class UI {
       if (locked) b.classList.add('locked');
       else if (best) b.classList.add('done');
 
-      if (!locked) {
-        b.addEventListener('pointerdown', (e) => {
-          e.preventDefault();
-          onPick(i);
-        });
-      }
+      if (!locked) b.addEventListener('click', () => onPick(i));
       grid.append(b);
     });
     o.append(grid);

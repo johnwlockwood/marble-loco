@@ -187,8 +187,18 @@ export class Game {
         this.ui.toast('Tilt enabled', '#58f7ff');
         break;
       case 'denied':
+        // Note: there is no "Motion & Orientation Access" switch to send people
+        // to any more -- Apple removed it. Safari now remembers the refusal per
+        // origin, and Prevent Cross-Site Tracking can block the sensors outright.
         this.tiltNote =
-          'iOS denied motion access. Re-allow it in Settings > Apps > Safari > Motion & Orientation Access, then reload.';
+          'Safari is refusing motion access for this site. Try, in order: ' +
+          '1) turn OFF Settings > Apps > Safari > Prevent Cross-Site Tracking. ' +
+          '2) delete this site under Settings > Apps > Safari > Advanced > Website Data ' +
+          '(Safari caches the refusal and will not ask twice). Then reload and tap Tilt again.';
+        break;
+      case 'no-gesture':
+        this.tiltNote =
+          'The browser did not count that as a tap, so it never asked. Tap TILT once more.';
         break;
       case 'insecure':
         this.tiltNote =
@@ -205,6 +215,11 @@ export class Game {
     if (result !== 'granted') {
       this.input.setMode('stick');
       this.ui.toast('Tilt unavailable', '#ff4d8d');
+      // Surface the raw reason too -- "denied" covers several distinct causes
+      // and the exact one is what makes it fixable.
+      if (this.input.lastTiltError) {
+        this.tiltNote += `  [${result}: ${this.input.lastTiltError}]`;
+      }
     }
 
     // Redraw the title so the toggle label and the note match.
