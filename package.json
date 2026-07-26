@@ -6,6 +6,7 @@
   "description": "Marble Madness style arcade game for iPhone, built on Three.js with a fully custom shader pipeline.",
   "scripts": {
     "dev": "vite --host",
+    "dev:https": "HTTPS=1 vite --host",
     "build": "vite build",
     "preview": "vite preview --host"
   },
@@ -14,6 +15,7 @@
   },
   "devDependencies": {
     "@types/three": "^0.185.1",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "typescript": "^7.0.2",
     "vite": "^8.1.5"
   }

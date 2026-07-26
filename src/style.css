@@ -230,6 +230,40 @@ body {
   justify-content: center;
 }
 
+/* -------------------------------------------------- steering selector --- */
+
+.segment {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.segment-label {
+  font-size: 9px;
+  letter-spacing: 0.24em;
+  color: var(--dim);
+  text-transform: uppercase;
+}
+
+.btn.on {
+  border-color: rgba(88, 247, 255, 0.6);
+  background: linear-gradient(180deg, rgba(88, 247, 255, 0.22), rgba(88, 247, 255, 0.07));
+  color: var(--ink);
+  box-shadow: 0 0 20px rgba(88, 247, 255, 0.22);
+}
+
+.note {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--dim);
+  max-width: 32ch;
+  border-left: 2px solid rgba(88, 247, 255, 0.4);
+  padding-left: 10px;
+  text-align: left;
+}
+
 /* ------------------------------------------------------- level select --- */
 
 .levels {

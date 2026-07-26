@@ -6,7 +6,8 @@ asset files — every surface, sound and particle is generated at runtime.
 
 ```bash
 npm install
-npm run dev      # then open the printed Network URL on your phone
+npm run dev          # stick controls; plain http
+npm run dev:https    # required if you want TILT on a real phone
 npm run build
 ```
 
@@ -21,11 +22,43 @@ fullscreen, chrome-free window.
 | Steer | tilt the phone | drag the left pad |
 | Jump | JUMP button | JUMP button |
 
-Tilt needs a permission prompt on iOS 13+, which the browser only allows from a
-tap — so it lives behind the **Controls** button on the title screen. Whatever
-attitude you are holding when you enable it becomes "level"; **Pause →
-Re-centre tilt** resets that. Keyboard (WASD/arrows + space) works everywhere
-for desktop testing.
+Pick one under **Steering** on the title screen. Keyboard (WASD/arrows + space)
+works everywhere for desktop testing.
+
+### Tilt requires HTTPS
+
+iOS will not release the motion sensors outside a **secure context**, and a LAN
+`http://192.168.x.x` origin is not one. Over plain http the sensors are not
+merely denied — Chrome and Safari hide `DeviceOrientationEvent` altogether, so
+there is nothing to prompt for.
+
+```bash
+npm run dev:https
+```
+
+This serves over TLS with a self-signed certificate, so the phone shows a
+warning the first time: **Show Details → visit this website** on Safari,
+**Advanced → Proceed** on Chrome. After that, tap **Tilt** on the title screen
+and accept the iOS motion prompt.
+
+If your phone refuses to accept the self-signed certificate, use a tunnel with
+a real one instead — any of these gives a trusted `https://` URL:
+
+```bash
+npx cloudflared tunnel --url http://localhost:5173
+npx localtunnel --port 5173
+```
+
+Whatever attitude you are holding when tilt is enabled becomes "level", and
+**Pause → Re-centre tilt** resets it. Axes are rotated by the current screen
+orientation, so landscape does not swap or invert the controls, and rotating
+the phone re-centres automatically.
+
+If enabling tilt fails, the title screen says exactly why — insecure origin,
+permission denied, no sensor, or permission granted but no readings arriving.
+That last case matters: permission is not the same as data, so the game waits
+1.5s for a real reading and falls back to the stick if none comes, rather than
+leaving you holding a phone that steers nothing.
 
 Steering is camera-relative: tilting right always moves the marble right *on
 screen*, whatever yaw the current course uses.

@@ -57,6 +57,8 @@ export class Game {
 
   private state: State = 'menu';
   private progress: Progress;
+  /** Explains the last tilt-enable attempt on the title screen. */
+  private tiltNote = '';
 
   private elapsed = 0;
   private deaths = 0;
@@ -143,6 +145,7 @@ export class Game {
       },
       this.input.mode,
       this.input.tiltAvailable,
+      this.tiltNote,
     );
 
     // Idle camera: a slow orbit over the first course so the menu is not static.
@@ -167,14 +170,44 @@ export class Game {
   private async toggleControls(): Promise<void> {
     if (this.input.mode === 'tilt') {
       this.input.setMode('stick');
-    } else {
-      const ok = await this.input.requestTilt();
-      if (!ok) {
-        this.ui.toast('Tilt unavailable', '#ff4d8d');
-        this.input.setMode('stick');
-      }
+      this.tiltNote = '';
+      if (this.state === 'menu') this.showMenu();
+      return;
     }
-    // Redraw the title so the toggle label matches.
+
+    // requestTilt() must see the user gesture, so it is called without any
+    // awaits in front of it.
+    const result = await this.input.requestTilt();
+
+    switch (result) {
+      case 'granted':
+        this.input.setMode('tilt');
+        this.input.calibrate();
+        this.tiltNote = 'Tilt on. However you are holding the phone right now is level.';
+        this.ui.toast('Tilt enabled', '#58f7ff');
+        break;
+      case 'denied':
+        this.tiltNote =
+          'iOS denied motion access. Re-allow it in Settings > Apps > Safari > Motion & Orientation Access, then reload.';
+        break;
+      case 'insecure':
+        this.tiltNote =
+          'Tilt needs a secure (https) connection. On the phone this means running the server with npm run dev:https.';
+        break;
+      case 'unsupported':
+        this.tiltNote = 'This device has no orientation sensor.';
+        break;
+      case 'no-data':
+        this.tiltNote = 'Permission granted, but no sensor readings arrived. Staying on the stick.';
+        break;
+    }
+
+    if (result !== 'granted') {
+      this.input.setMode('stick');
+      this.ui.toast('Tilt unavailable', '#ff4d8d');
+    }
+
+    // Redraw the title so the toggle label and the note match.
     if (this.state === 'menu') this.showMenu();
   }
 

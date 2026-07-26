@@ -120,7 +120,9 @@ export class UI {
     return b;
   }
 
-  showTitle(cb: TitleCallbacks, mode: ControlMode, tiltAvailable: boolean): void {
+  showTitle(
+    cb: TitleCallbacks, mode: ControlMode, tiltAvailable: boolean, tiltNote = '',
+  ): void {
     this.setPlayingChrome(false);
     const o = this.makeOverlay();
 
@@ -134,10 +136,27 @@ export class UI {
     row.append(this.button('Levels', cb.onLevels, true));
     o.append(row);
 
-    const controlLabel = mode === 'tilt' ? 'Controls: Tilt' : 'Controls: Stick';
-    const toggle = this.button(controlLabel, cb.onToggleControls, true);
-    if (!tiltAvailable) toggle.classList.add('hide');
-    o.append(toggle);
+    if (tiltAvailable) {
+      // A segmented control rather than a cycling button: the tilt option has
+      // to look like something you can turn on, or nobody ever finds it.
+      const seg = el('div', 'segment');
+      seg.append(el('div', 'segment-label', 'Steering'));
+
+      const opts = el('div', 'btn-row');
+      const stick = this.button('Stick', () => {
+        if (mode !== 'stick') cb.onToggleControls();
+      }, true);
+      const tilt = this.button('Tilt', () => {
+        if (mode !== 'tilt') cb.onToggleControls();
+      }, true);
+      stick.classList.toggle('on', mode === 'stick');
+      tilt.classList.toggle('on', mode === 'tilt');
+      opts.append(stick, tilt);
+      seg.append(opts);
+      o.append(seg);
+    }
+
+    if (tiltNote) o.append(el('div', 'note', tiltNote));
 
     this.setOverlay(o);
   }
