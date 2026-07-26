@@ -33,7 +33,12 @@
   const STEP_UP = 2.15;   // measured standing-jump clearance under the ball
   const JUMP_V = 12.5;    // must match JUMP_SPEED in Game.ts
   const GRAV = 34;        // must match GRAVITY in Game.ts
-  const MAX_GAP = 8.0;    // generous horizontal jump reach
+  // Horizontal jump reach. This is a *reachability* bound, not a difficulty
+  // one: at full tilt the marble carries ~25 units off a kicker, but anything
+  // past ~8 needs a committed run-up and is an expert line. Set at 12 so
+  // Pinball's 11-unit chasm -- which is meant to be hard -- does not read as
+  // broken. Raising it further starts hiding real problems.
+  const MAX_GAP = 12.0;
 
   function build(g) {
     const L = g.level;

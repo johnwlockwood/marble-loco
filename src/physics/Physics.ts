@@ -302,14 +302,19 @@ export function step(
   }
 
   // --- rolling spin (visual only) --------------------------------------------
-  // omega = (n x v) / r. Integrated as a small-angle quaternion.
+  // Rolling without slipping: the contact point must be stationary, so
+  // v + omega x (-n r) = 0, which solves to omega = (n x v) / r.
+  //
+  // The angle here is positive. Negating it -- which is easy to do by analogy
+  // with screen-space rotations -- spins the ball backwards against its own
+  // travel, and it reads as obviously wrong the moment you watch it move.
   const surfaceVel = _tmp.copy(body.velocity).sub(body.groundVelocity);
   const n = body.grounded ? body.groundNormal : _rel.set(0, 1, 0);
   _tangent.crossVectors(n, surfaceVel);
   const omega = _tangent.length() / body.radius;
   if (omega > 1e-4) {
     _tangent.divideScalar(omega * body.radius);
-    _spinDelta.setFromAxisAngle(_tangent, -omega * dt);
+    _spinDelta.setFromAxisAngle(_tangent, omega * dt);
     body.spin.premultiply(_spinDelta).normalize();
   }
 }

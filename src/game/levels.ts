@@ -407,21 +407,40 @@ const l8Deck: BlockDef[] = [
   // the exit chute. A closed ring here walled the goal off entirely.
   ...rails(0, -20, 30, 44, 0, 2.6, ['near', 'far']),
   ...railWithGap(0, 1.55, 30, 0, 12, 0, 2.6),
-  ...railWithGap(0, -41.55, 30, 0, 6, 0, 2.6),
+  // The far end is sealed except for a notch the kicker ramp fires through.
+  ...railWithGap(0, -41.55, 30, 0, 7, 0, 2.6),
   { p: [-7, 1.4, -8], s: [3, 2.8, 3], type: S.Bumper },
   { p: [6, 1.4, -14], s: [3, 2.8, 3], type: S.Bumper },
   { p: [-4, 1.4, -22], s: [3, 2.8, 3], type: S.Bumper },
   { p: [9, 1.4, -26], s: [3, 2.8, 3], type: S.Bumper },
   { p: [-10, 1.4, -30], s: [3, 2.8, 3], type: S.Bumper },
-  { p: [2, 1.4, -34], s: [3, 2.8, 3], type: S.Bumper },
+  // Moved off the launch corridor -- it used to sit squarely on the run-up.
+  { p: [7, 1.4, -34], s: [3, 2.8, 3], type: S.Bumper },
   boost(-12, -18, 4, 8, 0, [1, 0, -0.6], 17),
   boost(12, -30, 4, 8, 0, [-1, 0, -0.6], 17),
   pad(0, -12, 5, 0, S.Kill),
   pad(-12, -38, 5, 0, S.Kill),
   checkpoint(12, -12),
-  // Exit chute behind the table.
-  plat(0, -46, 6, 10),
-  goal(0, -48),
+
+  // --- the exit: a kicker over a chasm ------------------------------------
+  // Feeder strip pointing straight down the launch corridor.
+  boost(0, -27, 7, 5, 0, [0, 0, -1], 24),
+  // Deliberately shallow. Hitting an inclined face costs a normal impulse and
+  // Coulomb friction takes a cut of it, so a steep ramp simply eats the
+  // momentum you arrive with -- a 26 degree version of this ate 43% of it and
+  // nothing could climb the thing. At 18 degrees enough survives to matter.
+  //
+  // Rolling off the lip clears the chasm only at real speed. Anyone short of
+  // that has the other option: a jump timed at the lip, which adds a fixed
+  // 12.5 upward regardless of how slow the approach was.
+  ramp([0, 0, -34.5], [0, 1.0, -41], 6),
+  // The chasm is 11 wide, which sits deliberately between the two ranges:
+  // rolling off the lip at a good 24 carries about 8.8 and drops you in, while
+  // a jump timed at the lip carries about 19. Pure speed still works, but it
+  // takes roughly 28 off the boost and the bumpers -- the expert line.
+  plat(0, -59, 14, 14),
+  ...rails(0, -59, 14, 14, 0, 1.6, ['near']),
+  goal(0, -60),
 ];
 
 // The long one: an 89-tile solution with ice, crumble, sticky, a bumper and a
@@ -527,8 +546,8 @@ export const LEVELS: LevelDef[] = [
   },
   {
     id: 8, name: 'Pinball',
-    hint: 'Bumpers throw you. Use them.',
-    theme: 'neon', par: 105, camYaw: 24, camDistance: 16.5, camHeight: 13.5,
+    hint: 'Bumpers throw you. The exit is a jump — tap JUMP at the lip.',
+    theme: 'neon', par: 135, camYaw: 24, camDistance: 16.5, camHeight: 13.5,
     spawn: [0, 2.5, 11], blocks: l8Deck,
   },
   {
