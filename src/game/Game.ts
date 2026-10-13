@@ -64,6 +64,8 @@ export class Game {
   private readonly contacts: Contact[] = [];
   private level: Level | null = null;
   private levelIndex = 0;
+  /** How many courses exist; read by tools/reachability-audit.js. */
+  readonly levelCount = LEVELS.length;
 
   private state: State = 'menu';
   private progress: Progress;
@@ -166,7 +168,9 @@ export class Game {
     this.state = 'levels';
     this.ui.showLevelSelect(
       LEVELS.map((l) => ({ id: l.id, name: l.name })),
-      this.progress.unlocked,
+      // Dev builds open every course, so a level can be tested on a phone
+      // without replaying everything before it. Progress itself is untouched.
+      import.meta.env.DEV ? LEVELS.length - 1 : this.progress.unlocked,
       this.progress.bests,
       (index) => void this.launch(index),
       () => this.showMenu(),
@@ -512,6 +516,9 @@ export class Game {
           break;
 
         case SurfaceType.Bumper: {
+          // Only a real hit. Resting or grazing contact reports every substep,
+          // and firing on that turned the bumper into a 120Hz beeper.
+          if (impactSpeed < 2) break;
           level.flashBumper(collider);
           this.audio.bumper();
           this.charge = Math.min(1, this.charge + 0.6);

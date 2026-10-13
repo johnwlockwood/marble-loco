@@ -12,7 +12,14 @@ export default defineConfig({
   // absolute base would 404 every asset there.
   base: './',
   plugins: https ? [basicSsl()] : [],
-  server: { host: true, port: 5173 },
+  server: {
+    host: true,
+    port: 5173,
+    // `tailscale serve` proxies https://<machine>.<tailnet>.ts.net here with a
+    // real certificate -- the easiest way to get tilt working on a phone.
+    // Vite rejects unknown Host headers by default, so allow the tailnet.
+    allowedHosts: ['.ts.net'],
+  },
   build: {
     target: 'es2020',
     // Off by default: the map is ~2.9MB against a 604KB bundle, so it would be

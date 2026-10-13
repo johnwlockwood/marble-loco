@@ -39,6 +39,10 @@ export const SURFACE_PROPS: Record<SurfaceType, SurfaceProps> = {
   [SurfaceType.Bumper]: { friction: 0.25, rolling: 0.04, restitution: 1.55, control: 1.0 },
   [SurfaceType.Wall]: { friction: 0.32, rolling: 0.05, restitution: 0.42, control: 1.0 },
   [SurfaceType.Checkpoint]: { friction: 0.62, rolling: 0.055, restitution: 0.2, control: 1.0 },
+  // A belt has to *grip* to carry anything. At the normal rolling resistance
+  // the ball took three seconds to pick up a 6 u/s belt and simply rolled off
+  // the end first. This is still well under ACCEL, so you can fight it.
+  [SurfaceType.Conveyor]: { friction: 0.7, rolling: 0.3, restitution: 0.15, control: 1.0 },
 };
 
 /**
@@ -66,8 +70,10 @@ export class Collider {
   readonly half = new THREE.Vector3();
   readonly quat = new THREE.Quaternion();
   readonly invQuat = new THREE.Quaternion();
-  /** Kinematic velocity, in world units/s. Non-zero for moving platforms. */
+  /** Kinematic velocity, in world units/s. Non-zero for moving platforms and belts. */
   readonly velocity = new THREE.Vector3();
+  /** Kinematic angular velocity about `center`, in rad/s. Non-zero for spinners. */
+  readonly angular = new THREE.Vector3();
 
   type: SurfaceType = SurfaceType.Normal;
   active = true;
@@ -97,6 +103,13 @@ export class Collider {
 
     this.aabbMin.set(this.center.x - ex, this.center.y - ey, this.center.z - ez);
     this.aabbMax.set(this.center.x + ex, this.center.y + ey, this.center.z + ez);
+  }
+
+  /** Velocity of the surface at world point `p`: linear plus omega x r. */
+  pointVelocity(p: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 {
+    out.copy(p).sub(this.center).cross(this.angular);
+    // r x omega is -(omega x r); flip it back.
+    return out.negate().add(this.velocity);
   }
 
   /** Cheap broadphase reject against a sphere. */
@@ -169,6 +182,7 @@ const _point = new THREE.Vector3();
 const _tmp = new THREE.Vector3();
 const _axis = new THREE.Vector3();
 const _spinDelta = new THREE.Quaternion();
+const _surfVel = new THREE.Vector3();
 
 /** Allowed overlap before we bother pushing out; avoids resting-contact jitter. */
 const SLOP = 0.0015;
@@ -277,8 +291,10 @@ export function step(
       body.position.addScaledVector(_normal, depth - SLOP);
     }
 
-    // Solve in the surface's frame so moving platforms carry the ball.
-    _rel.copy(body.velocity).sub(c.velocity);
+    // Solve in the surface's frame so moving platforms carry the ball. For a
+    // spinner that frame differs at every point, so take it at the contact.
+    c.pointVelocity(_point, _surfVel);
+    _rel.copy(body.velocity).sub(_surfVel);
     const vn = _rel.dot(_normal);
 
     let impactSpeed = 0;
@@ -314,7 +330,7 @@ export function step(
         _rel.addScaledVector(_tangent, -applied / tLen);
       }
 
-      body.velocity.copy(_rel).add(c.velocity);
+      body.velocity.copy(_rel).add(_surfVel);
     }
 
     if (_normal.y > 0.45) {
@@ -326,7 +342,7 @@ export function step(
       if (_point.y > bestGroundY) {
         bestGroundY = _point.y;
         body.groundCollider = c;
-        body.groundVelocity.copy(c.velocity);
+        body.groundVelocity.copy(_surfVel);
       }
     }
 

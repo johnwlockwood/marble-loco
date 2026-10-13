@@ -35,6 +35,20 @@ export const THEMES: Record<string, Theme> = {
     skyTop: 0x050318, skyHorizon: 0xd8207a, skyGround: 0x020109,
     sun: 0x7df9ff, sunDir: [-0.5, 0.66, -0.45], fog: 0x180a33, fogDensity: 0.015, ambient: 0.55,
   },
+  // Sodium-lit factory haze for the belt courses.
+  foundry: {
+    skyTop: 0x120c06, skyHorizon: 0x8a5a1c, skyGround: 0x080503,
+    sun: 0xffc46b, sunDir: [-0.45, 0.58, 0.55], fog: 0x2e1f0e, fogDensity: 0.015, ambient: 0.8,
+  },
+  aurora: {
+    skyTop: 0x020c18, skyHorizon: 0x1f9a7a, skyGround: 0x01060c,
+    sun: 0xa6ffd8, sunDir: [0.35, 0.72, -0.6], fog: 0x0a2a33, fogDensity: 0.014, ambient: 0.85,
+  },
+  // Low, hard, almost white sun -- long shadows for the finale.
+  solar: {
+    skyTop: 0x1b0d2e, skyHorizon: 0xff8a3d, skyGround: 0x0b0610,
+    sun: 0xfff3d6, sunDir: [0.7, 0.32, 0.5], fog: 0x4a2238, fogDensity: 0.012, ambient: 0.75,
+  },
 };
 
 /**
