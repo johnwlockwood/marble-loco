@@ -187,6 +187,12 @@ fixed 120Hz with an accumulator.
 - Rolling spin is integrated from ω = (n × v)/r for the visual only. Verified
   by deriving ω back out of the orientation each frame and checking the contact
   point is stationary — which is what "rolling without slipping" means.
+- Spin is its own state, though, not that formula re-evaluated, so the ball
+  can disagree with its motion. Steering the surface cannot transmit (85% of
+  it on ice) winds the spin up, and each surface's `spinGrip` pulls it back to
+  true rolling — instantly on floor, over about a second on ice. So on ice the
+  marble spins in place and throws spray before it gets going, and in the air
+  it keeps the spin it left the ground with.
 
 Ramps are authored as two surface endpoints and the tilt is solved for
 (`ramp()` in `game/levels.ts`); a 2.4-over-5 ramp measures back as a 25.6°

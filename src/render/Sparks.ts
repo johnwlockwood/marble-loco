@@ -6,6 +6,10 @@ const LIFE = 0.9;
 /**
  * Additive spark system.
  *
+ * `solid` swaps glowing additive points for opaque flakes with a dark rim.
+ * Additive light cannot show up on anything already bright -- white spray
+ * on pale ice simply vanished -- whereas a rimmed flake reads on any ground.
+ *
  * Every particle is simulated entirely in the vertex shader from its spawn
  * state (position, velocity, birth time), so emitting costs one buffer write
  * and the CPU never touches a particle again.
@@ -23,7 +27,12 @@ export class Sparks {
   private cursor = 0;
   private dirty = false;
 
-  constructor() {
+  /**
+   * @param solid      opaque rimmed flakes instead of additive glow
+   * @param sizeScale  multiplies point size. Glowing sparks get away with a
+   *                   pixel or two because bloom spreads them; flakes do not.
+   */
+  constructor(solid = false, private readonly sizeScale = 1) {
     this.position = new Float32Array(MAX_PARTICLES * 3);
     this.velocity = new Float32Array(MAX_PARTICLES * 3);
     this.start = new Float32Array(MAX_PARTICLES).fill(-1000);
@@ -94,14 +103,22 @@ export class Sparks {
           if (vFade <= 0.0) discard;
           vec2 c = gl_PointCoord - 0.5;
           float d = dot(c, c) * 4.0;
+          ${solid ? `
+          // Hard-edged flake: a light core inside a dark rim.
+          float alpha = 1.0 - smoothstep(0.7, 1.0, d);
+          if (alpha <= 0.0) discard;
+          vec3 col = mix(vColor * 0.18, vColor, 1.0 - smoothstep(0.25, 0.5, d));
+          gl_FragColor = vec4(col, alpha * min(1.0, vFade * 2.0));
+          ` : `
           // Soft core with a hot centre -- reads well once bloom picks it up.
           float a = exp(-d * 3.2);
           gl_FragColor = vec4(vColor * (a * 2.2 + pow(a, 6.0) * 3.0) * vFade, a * vFade);
+          `}
         }
       `,
       transparent: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      blending: solid ? THREE.NormalBlending : THREE.AdditiveBlending,
     });
 
     this.points = new THREE.Points(this.geometry, this.material);
@@ -146,7 +163,7 @@ export class Sparks {
       this.color[idx * 3 + 1] = color.g;
       this.color[idx * 3 + 2] = color.b;
 
-      this.scale[idx] = 5 + Math.random() * 7;
+      this.scale[idx] = (5 + Math.random() * 7) * this.sizeScale;
       this.start[idx] = time;
     }
     this.dirty = true;

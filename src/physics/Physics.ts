@@ -25,26 +25,32 @@ export interface SurfaceProps {
   restitution: number;
   /** Multiplies the player's steering authority while in contact. */
   control: number;
+  /**
+   * How fast wheelspin dies back to true rolling, per second. High means the
+   * ball can never visibly slip; low lets it spin freely over the surface.
+   */
+  spinGrip: number;
 }
 
 export const SURFACE_PROPS: Record<SurfaceType, SurfaceProps> = {
-  [SurfaceType.Normal]: { friction: 0.62, rolling: 0.055, restitution: 0.22, control: 1.0 },
+  [SurfaceType.Normal]: { friction: 0.62, rolling: 0.055, restitution: 0.22, control: 1.0, spinGrip: 40 },
   // Steering at 0.30 braked at ~9 u/s^2 -- at the speeds a corridor allows,
   // that stopped the ball inside one tile and ice felt like floor.
-  [SurfaceType.Ice]: { friction: 0.035, rolling: 0.010, restitution: 0.12, control: 0.15 },
+  // spinGrip 2: the ball can spin several turns a second faster than it moves.
+  [SurfaceType.Ice]: { friction: 0.035, rolling: 0.010, restitution: 0.12, control: 0.15, spinGrip: 2 },
   // Sticky is the brake: high enough to actually scrub off speed.
-  [SurfaceType.Sticky]: { friction: 1.6, rolling: 0.55, restitution: 0.02, control: 0.85 },
-  [SurfaceType.Boost]: { friction: 0.4, rolling: 0.03, restitution: 0.1, control: 1.0 },
-  [SurfaceType.Crumble]: { friction: 0.7, rolling: 0.06, restitution: 0.15, control: 1.0 },
-  [SurfaceType.Goal]: { friction: 0.7, rolling: 0.06, restitution: 0.1, control: 1.0 },
-  [SurfaceType.Kill]: { friction: 0.6, rolling: 0.055, restitution: 0.3, control: 1.0 },
-  [SurfaceType.Bumper]: { friction: 0.25, rolling: 0.04, restitution: 1.55, control: 1.0 },
-  [SurfaceType.Wall]: { friction: 0.32, rolling: 0.05, restitution: 0.42, control: 1.0 },
-  [SurfaceType.Checkpoint]: { friction: 0.62, rolling: 0.055, restitution: 0.2, control: 1.0 },
+  [SurfaceType.Sticky]: { friction: 1.6, rolling: 0.55, restitution: 0.02, control: 0.85, spinGrip: 80 },
+  [SurfaceType.Boost]: { friction: 0.4, rolling: 0.03, restitution: 0.1, control: 1.0, spinGrip: 40 },
+  [SurfaceType.Crumble]: { friction: 0.7, rolling: 0.06, restitution: 0.15, control: 1.0, spinGrip: 40 },
+  [SurfaceType.Goal]: { friction: 0.7, rolling: 0.06, restitution: 0.1, control: 1.0, spinGrip: 40 },
+  [SurfaceType.Kill]: { friction: 0.6, rolling: 0.055, restitution: 0.3, control: 1.0, spinGrip: 40 },
+  [SurfaceType.Bumper]: { friction: 0.25, rolling: 0.04, restitution: 1.55, control: 1.0, spinGrip: 40 },
+  [SurfaceType.Wall]: { friction: 0.32, rolling: 0.05, restitution: 0.42, control: 1.0, spinGrip: 40 },
+  [SurfaceType.Checkpoint]: { friction: 0.62, rolling: 0.055, restitution: 0.2, control: 1.0, spinGrip: 40 },
   // A belt has to *grip* to carry anything. At the normal rolling resistance
   // the ball took three seconds to pick up a 6 u/s belt and simply rolled off
   // the end first. This is still well under ACCEL, so you can fight it.
-  [SurfaceType.Conveyor]: { friction: 0.7, rolling: 0.3, restitution: 0.15, control: 1.0 },
+  [SurfaceType.Conveyor]: { friction: 0.7, rolling: 0.3, restitution: 0.15, control: 1.0, spinGrip: 40 },
 };
 
 /**
@@ -140,8 +146,20 @@ export interface Contact {
 export class MarbleBody {
   readonly position = new THREE.Vector3();
   readonly velocity = new THREE.Vector3();
-  /** Visual spin, integrated from the rolling constraint. */
+  /** Visual orientation, integrated from `omega`. */
   readonly spin = new THREE.Quaternion();
+  /**
+   * Angular velocity, rad/s. Visual only, like `spin`: on most surfaces it is
+   * held to true rolling, but on ice it can run ahead of the ball -- wheelspin.
+   */
+  readonly omega = new THREE.Vector3();
+  /**
+   * Velocity of the contact point over the ground, u/s. Zero while rolling;
+   * on wheelspin it points the way the ball is scraping -- backwards from
+   * where you are pushing, which is where the spray goes.
+   */
+  readonly slip = new THREE.Vector3();
+  slipSpeed = 0;
 
   radius = 0.58;
   grounded = false;
@@ -157,6 +175,9 @@ export class MarbleBody {
     this.position.set(x, y, z);
     this.velocity.set(0, 0, 0);
     this.spin.identity();
+    this.omega.set(0, 0, 0);
+    this.slip.set(0, 0, 0);
+    this.slipSpeed = 0;
     this.grounded = false;
     this.groundNormal.set(0, 1, 0);
     this.groundVelocity.set(0, 0, 0);
@@ -172,6 +193,11 @@ export interface StepParams {
   /** Air drag coefficient. */
   drag: number;
   maxSpeed: number;
+  /**
+   * Steering the surface could not turn into motion (world XZ, u/s^2). It
+   * spins the ball instead -- so on ice, pushing hard spins it in place.
+   */
+  wheelspin: THREE.Vector3;
 }
 
 const _local = new THREE.Vector3();
@@ -364,20 +390,40 @@ export function step(
     body.timeSinceGrounded += dt;
   }
 
-  // --- rolling spin (visual only) --------------------------------------------
+  // --- spin (visual only) ----------------------------------------------------
   // Rolling without slipping: the contact point must be stationary, so
   // v + omega x (-n r) = 0, which solves to omega = (n x v) / r.
   //
   // The angle here is positive. Negating it -- which is easy to do by analogy
   // with screen-space rotations -- spins the ball backwards against its own
   // travel, and it reads as obviously wrong the moment you watch it move.
-  const surfaceVel = _tmp.copy(body.velocity).sub(body.groundVelocity);
-  const n = body.grounded ? body.groundNormal : _rel.set(0, 1, 0);
-  _tangent.crossVectors(n, surfaceVel);
-  const omega = _tangent.length() / body.radius;
+  //
+  // `omega` is a state of its own rather than that formula evaluated fresh,
+  // so the ball can disagree with its own motion. Steering the surface could
+  // not use winds it up, and it relaxes back to rolling at the surface's
+  // spinGrip: instantly on floor, slowly on ice. In the air nothing touches
+  // it, so the ball keeps whatever spin it left the ground with.
+  if (body.grounded && body.groundCollider) {
+    const grip = (SURFACE_PROPS[body.groundCollider.type] ?? SURFACE_PROPS[SurfaceType.Normal]).spinGrip;
+    const n = body.groundNormal;
+    const roll = _tangent.copy(body.velocity).sub(body.groundVelocity);
+    roll.crossVectors(n, roll).divideScalar(body.radius);
+
+    body.omega.addScaledVector(_tmp.crossVectors(n, params.wheelspin), dt / body.radius);
+    body.omega.lerp(roll, 1 - Math.exp(-grip * dt));
+    // Contact point velocity is (omega - roll) x (-n r) = r n x (omega - roll).
+    _tmp.copy(body.omega).sub(roll);
+    body.slip.crossVectors(n, _tmp).multiplyScalar(body.radius);
+    body.slipSpeed = body.slip.length();
+  } else {
+    body.slip.set(0, 0, 0);
+    body.slipSpeed = 0;
+  }
+
+  const omega = body.omega.length();
   if (omega > 1e-4) {
-    _tangent.divideScalar(omega * body.radius);
-    _spinDelta.setFromAxisAngle(_tangent, omega * dt);
+    _axis.copy(body.omega).divideScalar(omega);
+    _spinDelta.setFromAxisAngle(_axis, omega * dt);
     body.spin.premultiply(_spinDelta).normalize();
   }
 }
