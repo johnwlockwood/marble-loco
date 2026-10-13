@@ -162,7 +162,12 @@ export function createSurfaceMaterial(env: Environment, shadow: ShadowPass): THR
           float cr = fbm(vWorld * 2.2, 3);
           float veins = smoothstep(0.46, 0.5, abs(cr - 0.5));
           albedo = mix(albedo, vec3(0.62, 0.76, 0.84), 0.35 + veins * 0.5);
-          emissive += vec3(0.16, 0.42, 0.55) * veins * 0.6;
+          // Ice has to read as ice under any sky. Lit purely by the sun, the
+          // pale blue went yellow-green under the warm themes -- the same
+          // green as a boost pad. So darken what the light can tint, and
+          // carry the colour in a cold glow the light cannot touch.
+          albedo *= 0.55;
+          emissive += vec3(0.10, 0.30, 0.46) * (0.55 + veins * 0.9);
 
         } else if (isType(T_STICKY)) {
           gloss = 5.0;

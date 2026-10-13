@@ -77,8 +77,14 @@ function rails(
   x: number, z: number, w: number, d: number, y = 0, h = 2.0, open: Side[] = [],
 ): BlockDef[] {
   const out: BlockDef[] = [];
-  if (!open.includes('left')) out.push(wallZ(x - w / 2 + 0.45, z, d, y, h));
-  if (!open.includes('right')) out.push(wallZ(x + w / 2 - 0.45, z, d, y, h));
+  // Side rails stop short of the end rails. Running both the full length
+  // overlapped them at every corner, and coplanar tops z-fight.
+  const farTrim = open.includes('far') ? 0 : 0.9;
+  const nearTrim = open.includes('near') ? 0 : 0.9;
+  const sideLen = d - farTrim - nearTrim;
+  const sideZ = z + (farTrim - nearTrim) / 2;
+  if (!open.includes('left')) out.push(wallZ(x - w / 2 + 0.45, sideZ, sideLen, y, h));
+  if (!open.includes('right')) out.push(wallZ(x + w / 2 - 0.45, sideZ, sideLen, y, h));
   if (!open.includes('far')) out.push(wallX(x, z - d / 2 + 0.45, w, y, h));
   if (!open.includes('near')) out.push(wallX(x, z + d / 2 - 0.45, w, y, h));
   return out;
@@ -351,7 +357,7 @@ const l2Deck: BlockDef[] = [
   plat(2, -34, 6, 6),
   plat(8, -28, 5.5, 5.5),
   // Narrow catwalk to the finish.
-  plat(2, -44, 3.4, 14),
+  plat(2, -43.5, 3.4, 13),
   plat(2, -55, 12, 10),
   ...rails(2, -55, 12, 10, 0, 1.6, ['near']),
   goal(2, -56),
@@ -417,8 +423,10 @@ const l4Deck: BlockDef[] = (() => {
     if (i === 3) b.push(checkpoint(lx, lz, ly));
     // Hazard rings on the lower turns.
     if (i >= 4) {
-      b.push(pad(lx + 2.6, lz + 2.6, 2.4, ly, S.Kill));
-      b.push(pad(lx - 2.6, lz - 2.6, 2.4, ly, S.Kill));
+      // Pushed out on the goal landing, where 2.6 overlapped the goal pad.
+      const off = i === 7 ? 3.3 : 2.6;
+      b.push(pad(lx + off, lz + off, 2.4, ly, S.Kill));
+      b.push(pad(lx - off, lz - off, 2.4, ly, S.Kill));
     }
   }
 
@@ -426,26 +434,31 @@ const l4Deck: BlockDef[] = (() => {
   return b;
 })();
 
-const l5Deck: BlockDef[] = [
-  plat(0, 8, 12, 12),
-  ...rails(0, 8, 12, 12, 0, 1.6, ['far']),
-  // Long ice straight with a kink -- carry too much speed and you overshoot.
-  plat(0, -8, 9, 22, 0, { type: S.Ice }),
-  wallZ(-4.9, -8, 22),
-  wallZ(4.9, -8, 22),
-  plat(0, -22, 16, 8, 0, { type: S.Ice }),
-  wallX(0, -26.5, 16),
-  checkpoint(-6, -22),
-  // Sticky landing to bleed the speed off.
-  plat(-9, -30, 7, 12, 0, { type: S.Sticky }),
-  plat(-9, -42, 7, 14, 0, { type: S.Ice }),
-  wallZ(-12.9, -42, 14),
-  // Narrow ice bridge over nothing.
-  plat(-9, -54, 3.6, 12, 0, { type: S.Ice }),
-  plat(-9, -64, 12, 10),
-  ...rails(-9, -64, 12, 10, 0, 1.6, ['near']),
-  goal(-9, -65),
-];
+// Rebuilt as a grid so it is all holes: gaps in the floor to steer round,
+// gaps in the walls to slide out of, and almost nothing to brake on. Laid
+// out as slabs it also had every piece overlapping the next, which z-fought.
+const l5 = fromGrid([
+  '  #####  ',
+  '  #.G.#  ',
+  '  #...#  ',
+  '   I I   ',
+  ' IIIIIII ',
+  ' I  I  I ',
+  ' IIIIIII ',
+  '  II II  ',
+  ' ~~~C~~~ ',
+  ' III III ',
+  ' II   II ',
+  ' I  I  I ',
+  '#IIIIIII#',
+  '#II I II ',
+  '#IIIIIII#',
+  ' II I II#',
+  '#IIIIIII#',
+  '#II...II#',
+  '#...S...#',
+  '#########',
+], { cell: 3.2, wallHeight: 1.6 });
 
 const l6Deck: BlockDef[] = [
   plat(0, 8, 12, 12),
@@ -471,13 +484,16 @@ const l7Deck: BlockDef[] = (() => {
   ];
   // A path of crumbling tiles: stop moving and you go through the floor.
   const path: Array<[number, number]> = [
-    [0, -2], [0, -6], [-3, -10], [-3, -14], [0, -18], [3, -22], [3, -26],
+    [0, -2], [0, -6], [-3, -10], [-3, -14], [0, -18], [3, -26],
     [0, -30], [-3, -34], [-3, -38], [0, -42], [3, -46], [0, -50], [0, -54],
   ];
+  // 4 deep on a 4 pitch: neighbours meet edge to edge. At 4.4 they overlapped
+  // and the coplanar tops z-fought.
   for (const [x, z] of path) {
-    b.push(plat(x, z, 4.4, 4.4, 0, { type: S.Crumble }));
+    b.push(plat(x, z, 4.4, 4, 0, { type: S.Crumble }));
   }
-  b.push(plat(3, -22, 4.4, 4.4, 0, { type: S.Normal }));
+  // The one solid tile on the path.
+  b.push(plat(3, -22, 4.4, 4, 0, { type: S.Normal }));
   b.push(checkpoint(3, -22));
   b.push(plat(0, -62, 13, 11));
   b.push(...rails(0, -62, 13, 11, 0, 1.6, ['near']));
@@ -493,9 +509,10 @@ const l8Deck: BlockDef[] = [
   // Table walls with a doorway at each end -- in from the start deck, out to
   // the exit chute. A closed ring here walled the goal off entirely.
   ...rails(0, -20, 30, 44, 0, 2.6, ['near', 'far']),
-  ...railWithGap(0, 1.55, 30, 0, 12, 0, 2.6),
+  // 28.2, not 30: the side rails already fill the corners.
+  ...railWithGap(0, 1.55, 28.2, 0, 12, 0, 2.6),
   // The far end is sealed except for a notch the kicker ramp fires through.
-  ...railWithGap(0, -41.55, 30, 0, 7, 0, 2.6),
+  ...railWithGap(0, -41.55, 28.2, 0, 7, 0, 2.6),
   { p: [-7, 1.4, -8], s: [3, 2.8, 3], type: S.Bumper },
   { p: [6, 1.4, -14], s: [3, 2.8, 3], type: S.Bumper },
   { p: [-4, 1.4, -22], s: [3, 2.8, 3], type: S.Bumper },
@@ -655,16 +672,17 @@ const l13Deck: BlockDef[] = [
 ];
 
 // A serpentine factory floor. Belts with you, belts against you, and the
-// worst of them on ice. The sticky patches are where you have to turn.
+// sticky patches are where you have to turn. The ice row's exit is two tiles
+// short of its end, and the end is a hazard: overshoot and you are done.
 const l14 = fromGrid([
   '#############',
   '#G..<<<<<<..#',
   '###########^#',
   '#...X.X.>>>.#',
   '#.###########',
-  '#~~..<<<<..C#',
-  '###########.#',
-  '#.IIIIIII>>.#',
+  '#~~..<<<<C..#',
+  '#########.###',
+  '#.IIIIIIIIIK#',
   '#.###########',
   '#..O...>>>..#',
   '###########.#',
@@ -761,9 +779,9 @@ export const LEVELS: LevelDef[] = [
   },
   {
     id: 5, name: 'Black Ice',
-    hint: 'No grip. Brake early on the brown patches.',
-    theme: 'ice', par: 100, camYaw: 22, spawn: [0, 2.5, 11],
-    blocks: l5Deck,
+    hint: 'No grip, and holes everywhere. Brake on the brown.',
+    theme: 'ice', par: 100, camYaw: 22,
+    spawn: l5.spawn, blocks: l5.blocks,
   },
   {
     id: 6, name: 'Clockwork',

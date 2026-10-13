@@ -29,7 +29,9 @@ export interface SurfaceProps {
 
 export const SURFACE_PROPS: Record<SurfaceType, SurfaceProps> = {
   [SurfaceType.Normal]: { friction: 0.62, rolling: 0.055, restitution: 0.22, control: 1.0 },
-  [SurfaceType.Ice]: { friction: 0.035, rolling: 0.010, restitution: 0.12, control: 0.30 },
+  // Steering at 0.30 braked at ~9 u/s^2 -- at the speeds a corridor allows,
+  // that stopped the ball inside one tile and ice felt like floor.
+  [SurfaceType.Ice]: { friction: 0.035, rolling: 0.010, restitution: 0.12, control: 0.15 },
   // Sticky is the brake: high enough to actually scrub off speed.
   [SurfaceType.Sticky]: { friction: 1.6, rolling: 0.55, restitution: 0.02, control: 0.85 },
   [SurfaceType.Boost]: { friction: 0.4, rolling: 0.03, restitution: 0.1, control: 1.0 },
