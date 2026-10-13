@@ -1,7 +1,7 @@
 # Marble Loco
 
 A Marble Madness–style arcade game for the iPhone, built on Three.js with a
-hand-written shader pipeline. Ten courses, tilt or thumbstick controls, no
+hand-written shader pipeline. Sixteen courses, tilt or thumbstick controls, no
 asset files — every surface, sound and particle is generated at runtime.
 
 There is no `MeshStandardMaterial` anywhere, no cubemap render target, no
@@ -92,6 +92,12 @@ screen*, whatever yaw the current course uses.
 | 8 | Pinball | bumpers, crossing boost strips |
 | 9 | The Gauntlet | an 89-tile maze with everything in it |
 | 10 | Freefall | a 40-unit descent, movers and hazards |
+| 11 | Assembly Line | conveyor belts — with you, across you, against you |
+| 12 | Turnstile | rotating bridges over the void |
+| 13 | Sweepers | spinning arms to time or jump, then on ice |
+| 14 | Factory Floor | a belt-driven serpentine maze |
+| 15 | Slipstream | launch, ice, crumble, turnstile, shuttles |
+| 16 | Overdrive | an escalator and everything else, in one run |
 
 Each has a time limit rather than lives; falling costs you seconds, not a run.
 Checkpoints move your respawn. Progress and best times persist in
@@ -172,9 +178,21 @@ fixed 120Hz with an accumulator.
 - Steering acceleration is projected onto the ground plane so you drive *up* a
   ramp instead of into it; air control is cut to 32%.
 - Coyote time (0.12s) on jumps.
+- Colliders carry an angular velocity as well as a linear one, and contacts
+  use the surface velocity *at the contact point* (v + ω × r). That one change
+  is what lets turnstiles carry you and sweepers bat you away. Conveyor belts
+  need nothing new at all: a belt is a static box with a non-zero `velocity`,
+  and the surface-frame solve does the rest. Belts get a much higher rolling
+  coefficient than plain floor, or they take seconds to pick the ball up.
 - Rolling spin is integrated from ω = (n × v)/r for the visual only. Verified
   by deriving ω back out of the orientation each frame and checking the contact
   point is stationary — which is what "rolling without slipping" means.
+- Spin is its own state, though, not that formula re-evaluated, so the ball
+  can disagree with its motion. Steering the surface cannot transmit (85% of
+  it on ice) winds the spin up, and each surface's `spinGrip` pulls it back to
+  true rolling — instantly on floor, over about a second on ice. So on ice the
+  marble spins in place and throws spray before it gets going, and in the air
+  it keeps the spin it left the ground with.
 
 Ramps are authored as two surface endpoints and the tilt is solved for
 (`ramp()` in `game/levels.ts`); a 2.4-over-5 ramp measures back as a 25.6°
@@ -220,9 +238,16 @@ Two traps it exists to catch, both of which shipped:
   reaching barely 1.0 of lift even at full speed.
 
 Levels are data. `game/levels.ts` has helpers (`plat`, `ramp`, `mover`,
-`boost`, `rails`, `railWithGap`) plus `fromGrid()`, which compiles an ASCII map — `#` wall,
-`I` ice, `X` crumble, `O` bumper, `~` sticky, `S`/`G`/`C` spawn/goal/checkpoint
-— run-merging identical tiles along X to keep both vertices and colliders down.
+`boost`, `rails`, `railWithGap`, `conveyor`, `escalator`, `turnstile`,
+`sweeper`) plus `fromGrid()`, which compiles an ASCII map — `#` wall, `I` ice,
+`X` crumble, `O` bumper, `~` sticky, `^ v < >` belts, `S`/`G`/`C`
+spawn/goal/checkpoint — run-merging identical tiles along X to keep both
+vertices and colliders down.
+
+Spinners turn on the global clock, so the audit sees them at whatever angle
+they happen to be at. Build routes to meet a turnstile's arms at phase 0 (arms
+along X and Z) with ~0.4 of clearance at each tip, so the sweeping tip clears
+the deck corner.
 The two mazes were machine-generated (recursive backtracker + braiding) and
 flood-fill verified solvable.
 

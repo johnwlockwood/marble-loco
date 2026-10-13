@@ -251,7 +251,7 @@
     },
 
     async all() {
-      const n = 10;
+      const n = window.game.levelCount;
       const rows = [];
       for (let i = 0; i < n; i++) rows.push(await this.level(i));
       const bad = rows.filter((r) => !r.goal || r.checkpoints.some((c) => !c));

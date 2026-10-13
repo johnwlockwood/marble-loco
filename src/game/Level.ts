@@ -34,11 +34,12 @@ interface Buffers {
   aState: number[];
   aFaceUv: number[];
   aFaceSize: number[];
+  aFlow: number[];
   index: number[];
 }
 
 function emptyBuffers(): Buffers {
-  return { position: [], normal: [], aColor: [], aType: [], aState: [], aFaceUv: [], aFaceSize: [], index: [] };
+  return { position: [], normal: [], aColor: [], aType: [], aState: [], aFaceUv: [], aFaceSize: [], aFlow: [], index: [] };
 }
 
 const _v = new THREE.Vector3();
@@ -46,6 +47,7 @@ const _n = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
 const _color = new THREE.Color();
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
 /**
  * Appends one box to `buf`.
@@ -76,6 +78,16 @@ function pushBox(buf: Buffers, def: BlockDef, origin: THREE.Vector3 | null): voi
   const oy = origin ? def.p[1] - origin.y : def.p[1];
   const oz = origin ? def.p[2] - origin.z : def.p[2];
 
+  // Which way the surface's chevrons run: a belt's real velocity, or the unit
+  // XZ direction of a boost pad's impulse.
+  let flowX = 0, flowZ = 0;
+  if (def.belt) {
+    flowX = def.belt[0]; flowZ = def.belt[2];
+  } else if (def.boost) {
+    const len = Math.hypot(def.boost.dir[0], def.boost.dir[2]);
+    if (len > 1e-6) { flowX = def.boost.dir[0] / len; flowZ = def.boost.dir[2] / len; }
+  }
+
   for (const face of FACES) {
     const base = buf.position.length / 3;
 
@@ -99,6 +111,7 @@ function pushBox(buf: Buffers, def: BlockDef, origin: THREE.Vector3 | null): voi
       buf.aState.push(0);
       buf.aFaceUv.push(cu, cv);
       buf.aFaceSize.push(uSize, vSize);
+      buf.aFlow.push(flowX, flowZ);
     }
 
     buf.index.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -114,6 +127,7 @@ function toGeometry(buf: Buffers): THREE.BufferGeometry {
   g.setAttribute('aState', new THREE.Float32BufferAttribute(buf.aState, 1));
   g.setAttribute('aFaceUv', new THREE.Float32BufferAttribute(buf.aFaceUv, 2));
   g.setAttribute('aFaceSize', new THREE.Float32BufferAttribute(buf.aFaceSize, 2));
+  g.setAttribute('aFlow', new THREE.Float32BufferAttribute(buf.aFlow, 2));
   g.setIndex(buf.index);
   g.computeBoundingSphere();
   return g;
@@ -130,6 +144,7 @@ export function defaultColor(type: SurfaceType): number {
     case SurfaceType.Bumper: return 0xff5ec4;
     case SurfaceType.Wall: return 0x3c4675;
     case SurfaceType.Checkpoint: return 0x4fb8ff;
+    case SurfaceType.Conveyor: return 0x5a5f6e;
     default: return 0x77809e;
   }
 }
@@ -142,6 +157,8 @@ interface DynamicBlock {
   geometry: THREE.BufferGeometry;
   /** Base position; movers oscillate around this. */
   home: THREE.Vector3;
+  /** Authored orientation; spinners turn relative to this. */
+  baseQuat: THREE.Quaternion;
   state: number;
   /** Crumble: seconds of life left, or -1 while untouched. */
   fuse: number;
@@ -193,6 +210,9 @@ export class Level {
 
       const collider = new Collider(center, half, quat);
       collider.type = type;
+      // A belt never moves, but its surface does: the physics solves contacts
+      // relative to collider velocity, so that alone is what carries the ball.
+      if (block.belt) collider.velocity.set(block.belt[0], block.belt[1], block.belt[2]);
       this.colliders.push(collider);
       this.defByCollider.set(collider, block);
 
@@ -202,6 +222,7 @@ export class Level {
 
       const isDynamic =
         !!block.move ||
+        !!block.spin ||
         type === SurfaceType.Crumble ||
         type === SurfaceType.Goal ||
         type === SurfaceType.Bumper ||
@@ -219,7 +240,7 @@ export class Level {
 
         const dyn: DynamicBlock = {
           def: block, collider, mesh, geometry,
-          home: center.clone(), state: 0, fuse: -1, respawn: -1, fallVelocity: 0,
+          home: center.clone(), baseQuat: quat.clone(), state: 0, fuse: -1, respawn: -1, fallVelocity: 0,
         };
         this.dynamics.push(dyn);
 
@@ -295,6 +316,18 @@ export class Level {
         collider.velocity.set(dx, dy, dz).multiplyScalar(dtdTheta * omega);
         collider.refresh();
         mesh.position.copy(collider.center);
+      }
+
+      // --- spinners -----------------------------------------------------------
+      if (def.spin) {
+        const rate = THREE.MathUtils.degToRad(def.spin.rate);
+        const angle = time * rate + THREE.MathUtils.degToRad(def.spin.phase ?? 0);
+        // The mesh's vertices already carry the authored rotation, so the mesh
+        // only needs the spin; the collider needs both.
+        mesh.quaternion.setFromAxisAngle(Y_AXIS, angle);
+        collider.quat.copy(mesh.quaternion).multiply(dyn.baseQuat);
+        collider.angular.set(0, rate, 0);
+        collider.refresh();
       }
 
       // --- crumbling ----------------------------------------------------------

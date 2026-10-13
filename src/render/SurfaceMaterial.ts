@@ -19,6 +19,7 @@ export enum SurfaceType {
   Bumper = 7,
   Wall = 8,
   Checkpoint = 9,
+  Conveyor = 10,
 }
 
 /**
@@ -31,6 +32,9 @@ export enum SurfaceType {
  *   - `aFaceUv`/`aFaceSize` position within the face and the face's world
  *               dimensions, which lets the shader inset a border by a constant
  *               world distance regardless of how big the block is
+ *   - `aFlow`   which way chevrons run, in world XZ: a belt's velocity, or a
+ *               boost pad's unit impulse direction. Static, so both still
+ *               merge into the single level draw
  */
 export function createSurfaceMaterial(env: Environment, shadow: ShadowPass): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
@@ -48,6 +52,7 @@ export function createSurfaceMaterial(env: Environment, shadow: ShadowPass): THR
       attribute float aState;
       attribute vec2 aFaceUv;
       attribute vec2 aFaceSize;
+      attribute vec2 aFlow;
 
       varying vec3 vWorld;
       varying vec3 vNormalW;
@@ -56,6 +61,7 @@ export function createSurfaceMaterial(env: Environment, shadow: ShadowPass): THR
       varying vec2 vFaceSize;
       varying float vType;
       varying float vState;
+      varying vec2 vFlow;
 
       void main(){
         vec4 world = modelMatrix * vec4(position, 1.0);
@@ -66,6 +72,7 @@ export function createSurfaceMaterial(env: Environment, shadow: ShadowPass): THR
         vFaceSize = aFaceSize;
         vType = aType;
         vState = aState;
+        vFlow = aFlow;
         gl_Position = projectionMatrix * viewMatrix * world;
       }
     `,
@@ -89,10 +96,11 @@ export function createSurfaceMaterial(env: Environment, shadow: ShadowPass): THR
       varying vec2 vFaceSize;
       varying float vType;
       varying float vState;
+      varying vec2 vFlow;
 
       const float T_NORMAL = 0.0, T_ICE = 1.0, T_STICKY = 2.0, T_BOOST = 3.0;
       const float T_CRUMBLE = 4.0, T_GOAL = 5.0, T_KILL = 6.0, T_BUMPER = 7.0;
-      const float T_WALL = 8.0, T_CHECKPOINT = 9.0;
+      const float T_WALL = 8.0, T_CHECKPOINT = 9.0, T_CONVEYOR = 10.0;
 
       bool isType(float t){ return abs(vType - t) < 0.5; }
 
@@ -100,6 +108,27 @@ export function createSurfaceMaterial(env: Environment, shadow: ShadowPass): THR
       float band(float x, float w){
         float aa = fwidth(x) * 0.9 + 1e-5;
         return 1.0 - smoothstep(w - aa, w + aa, abs(x));
+      }
+
+      /**
+       * Chevrons on a top face, pointing along flow (world XZ) and moving
+       * that way at speed world units/s, one every period units.
+       *
+       * The across-flow offset is measured from the face centre, rebuilt from
+       * the face UV (top face: u = +x, v = -z). Adding |across| to the along
+       * coordinate puts each chevron's tip on the centreline, ahead of its
+       * wings -- subtracting it, which looks equally plausible, draws them
+       * pointing backwards.
+       */
+      float chevrons(vec2 flow, float period, float speed){
+        float len = length(flow);
+        vec2 dir = len > 1e-3 ? flow / len : vec2(0.0, -1.0);
+        vec2 local = vec2((vFaceUv.x - 0.5) * vFaceSize.x, -(vFaceUv.y - 0.5) * vFaceSize.y);
+        float across = dot(local, vec2(-dir.y, dir.x));
+        float along = dot(vWorld.xz, dir) + abs(across) * 0.6;
+        float c = fract((along - uTime * speed) / period);
+        // Hard leading edge, soft tail.
+        return smoothstep(0.0, 0.25, c) * smoothstep(0.5, 0.42, c);
       }
 
       void main(){
@@ -133,7 +162,12 @@ export function createSurfaceMaterial(env: Environment, shadow: ShadowPass): THR
           float cr = fbm(vWorld * 2.2, 3);
           float veins = smoothstep(0.46, 0.5, abs(cr - 0.5));
           albedo = mix(albedo, vec3(0.62, 0.76, 0.84), 0.35 + veins * 0.5);
-          emissive += vec3(0.16, 0.42, 0.55) * veins * 0.6;
+          // Ice has to read as ice under any sky. Lit purely by the sun, the
+          // pale blue went yellow-green under the warm themes -- the same
+          // green as a boost pad. So darken what the light can tint, and
+          // carry the colour in a cold glow the light cannot touch.
+          albedo *= 0.55;
+          emissive += vec3(0.10, 0.30, 0.46) * (0.55 + veins * 0.9);
 
         } else if (isType(T_STICKY)) {
           gloss = 5.0;
@@ -142,13 +176,9 @@ export function createSurfaceMaterial(env: Environment, shadow: ShadowPass): THR
           albedo *= 0.55 + grit * 0.6;
 
         } else if (isType(T_BOOST)) {
-          // Chevrons scrolling along the pad's long axis.
-          float axis = vFaceSize.x >= vFaceSize.y ? vFaceUv.x : vFaceUv.y;
-          float cross_ = vFaceSize.x >= vFaceSize.y ? vFaceUv.y : vFaceUv.x;
-          float len = max(vFaceSize.x, vFaceSize.y);
-          float chev = fract((axis - abs(cross_ - 0.5) * 0.55) * len * 0.55 - uTime * 1.5);
-          float arrow = smoothstep(0.52, 0.30, chev) * smoothstep(0.0, 0.10, chev);
-          emissive += vec3(0.25, 1.0, 0.75) * arrow * 2.4 * top;
+          // Arrows racing the way the pad actually throws you.
+          float arrow = chevrons(vFlow, 1.8, 2.7) * top;
+          emissive += vec3(0.25, 1.0, 0.75) * arrow * 2.4;
           albedo = mix(albedo, vec3(0.03, 0.12, 0.09), 0.5);
           gloss = 70.0;
 
@@ -194,6 +224,15 @@ export function createSurfaceMaterial(env: Environment, shadow: ShadowPass): THR
           emissive += vec3(1.0, 0.35, 0.9) * (ring * 0.8 + vState * 3.5);
           albedo = mix(albedo, vec3(0.4, 0.08, 0.3), 0.55);
           gloss = 120.0;
+
+        } else if (isType(T_CONVEYOR)) {
+          // Treads travel at the belt's real speed, so what you see is exactly
+          // what the ball feels.
+          float ridge = chevrons(vFlow, 0.8, length(vFlow));
+          albedo = mix(vec3(0.07, 0.075, 0.09), albedo, 0.35 + ridge * 0.4);
+          emissive += vec3(1.0, 0.62, 0.12) * ridge * 0.9 * top;
+          gloss = 55.0;
+          specStrength = 0.5;
 
         } else if (isType(T_WALL)) {
           // Walls get vertical scanlines instead of the floor grid.

@@ -50,6 +50,8 @@ export class Game {
   private readonly shadow = new ShadowPass(1024, 24);
   private readonly post = new PostFX();
   private readonly sparks = new Sparks();
+  /** Spray thrown off by wheelspin. Solid, so it shows up over bright ice. */
+  private readonly spray = new Sparks(true, 10);
 
   private readonly surfaceMaterial: THREE.ShaderMaterial;
   private readonly marbleMaterial: THREE.ShaderMaterial;
@@ -64,6 +66,8 @@ export class Game {
   private readonly contacts: Contact[] = [];
   private level: Level | null = null;
   private levelIndex = 0;
+  /** How many courses exist; read by tools/reachability-audit.js. */
+  readonly levelCount = LEVELS.length;
 
   private state: State = 'menu';
   private progress: Progress;
@@ -75,12 +79,17 @@ export class Game {
   private readonly respawnPoint = new THREE.Vector3();
   private respawnTimer = 0;
   private boostCooldown = 0;
+  /** Seconds until the next puff of spray from a slipping ball. */
+  private sprayTimer = 0;
+  private readonly sprayDir = new THREE.Vector3();
   private jumpArmed = true;
   private charge = 0;
   private hurt = 0;
   private readonly flash = new THREE.Vector4();
 
   private readonly accel = new THREE.Vector3();
+  /** The share of steering the ground could not take; it spins the ball. */
+  private readonly wheelspin = new THREE.Vector3();
   private readonly camForward = new THREE.Vector3(0, 0, -1);
   private readonly camRight = new THREE.Vector3(1, 0, 0);
   private readonly camOffset = new THREE.Vector3();
@@ -119,7 +128,7 @@ export class Game {
 
     this.contactShadow = createContactShadow();
 
-    this.scene.add(this.env.mesh, this.marbleMesh, this.contactShadow, this.sparks.points);
+    this.scene.add(this.env.mesh, this.marbleMesh, this.contactShadow, this.sparks.points, this.spray.points);
 
     this.input.attach(this.ui.stick, this.ui.nub, this.ui.jump);
     this.ui.onPause(() => this.togglePause());
@@ -166,7 +175,9 @@ export class Game {
     this.state = 'levels';
     this.ui.showLevelSelect(
       LEVELS.map((l) => ({ id: l.id, name: l.name })),
-      this.progress.unlocked,
+      // Dev builds open every course, so a level can be tested on a phone
+      // without replaying everything before it. Progress itself is untouched.
+      import.meta.env.DEV ? LEVELS.length - 1 : this.progress.unlocked,
       this.progress.bests,
       (index) => void this.launch(index),
       () => this.showMenu(),
@@ -298,6 +309,7 @@ export class Game {
     this.hurt = 0;
     this.jumpArmed = true;
     this.sparks.clear();
+    this.spray.clear();
 
     this.respawnPoint.set(...(def.spawn as [number, number, number]));
     this.body.reset(this.respawnPoint.x, this.respawnPoint.y, this.respawnPoint.z);
@@ -433,6 +445,7 @@ export class Game {
       if (this.respawnTimer <= 0) this.respawn();
       // Keep falling while dead, but no steering.
       this.accel.set(0, 0, 0);
+      this.wheelspin.set(0, 0, 0);
     } else {
       this.input.update();
       const control = this.body.grounded && this.body.groundCollider
@@ -442,7 +455,10 @@ export class Game {
       this.accel
         .copy(this.camRight).multiplyScalar(this.input.move.x)
         .addScaledVector(this.camForward, this.input.move.y)
-        .multiplyScalar(ACCEL * control);
+        .multiplyScalar(ACCEL);
+      // Whatever the surface cannot transmit goes into wheelspin.
+      this.wheelspin.copy(this.accel).multiplyScalar(this.body.grounded ? 1 - control : 0);
+      this.accel.multiplyScalar(control);
 
       if (this.input.jumpPressed && this.jumpArmed &&
           (this.body.grounded || this.body.timeSinceGrounded < COYOTE_TIME)) {
@@ -464,11 +480,13 @@ export class Game {
       accel: this.accel,
       drag: AIR_DRAG,
       maxSpeed: MAX_SPEED,
+      wheelspin: this.wheelspin,
     }, this.contacts);
 
     if (this.body.grounded) this.jumpArmed = true;
 
     this.boostCooldown = Math.max(0, this.boostCooldown - dt);
+    this.sprayFromSlip(dt);
     this.handleContacts(level);
 
     if (this.body.position.y < level.killY) this.die('fall');
@@ -477,6 +495,32 @@ export class Game {
     if (this.elapsed >= LEVELS[this.levelIndex].par) {
       this.failLevel('Time Up', `${LEVELS[this.levelIndex].name} beat you by the clock. ${this.deaths} fall${this.deaths === 1 ? '' : 's'}.`);
     }
+  }
+
+  /**
+   * A spinning, slipping ball throws a rooster tail of spray the way its
+   * contact point is scraping -- behind it, up and out where it can be seen.
+   * Puffed straight up from the contact point, the marble itself hid it and
+   * the pale ice swallowed what was left.
+   */
+  private sprayFromSlip(dt: number): void {
+    this.sprayTimer -= dt;
+    const body = this.body;
+    const slip = body.slipSpeed;
+    if (slip < 3 || !body.grounded || this.sprayTimer > 0) return;
+    // Faster slip, denser spray.
+    this.sprayTimer = THREE.MathUtils.lerp(0.07, 0.025, Math.min(1, (slip - 3) / 12));
+
+    const dir = this.sprayDir.copy(body.slip).divideScalar(slip)
+      .addScaledVector(body.groundNormal, 0.8).normalize();
+    // Out from behind the ball rather than underneath it.
+    this.tmp.copy(body.position)
+      .addScaledVector(body.groundNormal, -body.radius * 0.6)
+      .addScaledVector(body.slip, body.radius * 0.9 / slip);
+    this.spray.burst(
+      this.tmp, dir, 6, 5 + slip * 0.45,
+      this.sparkColor.setHex(0xf2fbff), this.engine.time, 0.35,
+    );
   }
 
   private handleContacts(level: Level): void {
@@ -512,6 +556,9 @@ export class Game {
           break;
 
         case SurfaceType.Bumper: {
+          // Only a real hit. Resting or grazing contact reports every substep,
+          // and firing on that turned the bumper into a 120Hz beeper.
+          if (impactSpeed < 2) break;
           level.flashBumper(collider);
           this.audio.bumper();
           this.charge = Math.min(1, this.charge + 0.6);
@@ -590,6 +637,7 @@ export class Game {
 
     this.env.update(time, this.camera);
     this.sparks.update(time, this.engine.drawHeight);
+    this.spray.update(time, this.engine.drawHeight);
 
     // HUD.
     if (this.state === 'playing') {
@@ -780,6 +828,7 @@ export class Game {
     this.post.dispose();
     this.shadow.dispose();
     this.sparks.dispose();
+    this.spray.dispose();
     this.level?.dispose();
     this.env.dispose();
   }

@@ -16,6 +16,13 @@ export interface BlockDef {
   move?: { to: [number, number, number]; period: number; phase?: number };
   /** Impulse applied on contact. Direction is not normalised -- scale it yourself. */
   boost?: { dir: [number, number, number]; power: number };
+  /** Conveyor belt surface velocity, world units/s. The block itself stays put. */
+  belt?: [number, number, number];
+  /**
+   * Turns about the block's own centre, around world Y, at `rate` degrees/s.
+   * `phase` is a starting angle in degrees.
+   */
+  spin?: { rate: number; phase?: number };
 }
 
 export interface LevelDef {
@@ -70,8 +77,14 @@ function rails(
   x: number, z: number, w: number, d: number, y = 0, h = 2.0, open: Side[] = [],
 ): BlockDef[] {
   const out: BlockDef[] = [];
-  if (!open.includes('left')) out.push(wallZ(x - w / 2 + 0.45, z, d, y, h));
-  if (!open.includes('right')) out.push(wallZ(x + w / 2 - 0.45, z, d, y, h));
+  // Side rails stop short of the end rails. Running both the full length
+  // overlapped them at every corner, and coplanar tops z-fight.
+  const farTrim = open.includes('far') ? 0 : 0.9;
+  const nearTrim = open.includes('near') ? 0 : 0.9;
+  const sideLen = d - farTrim - nearTrim;
+  const sideZ = z + (farTrim - nearTrim) / 2;
+  if (!open.includes('left')) out.push(wallZ(x - w / 2 + 0.45, sideZ, sideLen, y, h));
+  if (!open.includes('right')) out.push(wallZ(x + w / 2 - 0.45, sideZ, sideLen, y, h));
   if (!open.includes('far')) out.push(wallX(x, z - d / 2 + 0.45, w, y, h));
   if (!open.includes('near')) out.push(wallX(x, z + d / 2 - 0.45, w, y, h));
   return out;
@@ -162,9 +175,65 @@ function mover(
   };
 }
 
+/**
+ * A conveyor belt. `vel` is the belt's surface velocity on the XZ plane; the
+ * block never moves, the physics just solves contacts relative to it.
+ */
+function conveyor(
+  x: number, z: number, w: number, d: number, y: number,
+  vel: [number, number], opts: Partial<BlockDef> = {},
+): BlockDef {
+  return plat(x, z, w, d, y, { type: S.Conveyor, belt: [vel[0], 0, vel[1]], ...opts });
+}
+
+/**
+ * A belt laid on a ramp -- an escalator. The belt velocity follows the slope,
+ * so `speed` is along the surface, from `from` towards `to`.
+ */
+function escalator(
+  from: [number, number, number], to: [number, number, number], width: number, speed: number,
+): BlockDef {
+  const dx = to[0] - from[0], dy = to[1] - from[1], dz = to[2] - from[2];
+  const len = Math.hypot(dx, dy, dz);
+  return ramp(from, to, width, {
+    type: S.Conveyor,
+    belt: [(dx / len) * speed, (dy / len) * speed, (dz / len) * speed],
+  });
+}
+
+/**
+ * A turnstile: a plus of two bridges, `len` tip to tip, turning about (x, z).
+ * At phase 0 its arms lie along X and Z, which is how the routes are built to
+ * meet it -- leave ~0.4 between an arm tip and the deck it meets, so the
+ * sweeping tip clears the deck corner.
+ */
+function turnstile(
+  x: number, z: number, len: number, width: number, y: number, rate: number,
+): BlockDef[] {
+  return [
+    plat(x, z, width, len, y, { spin: { rate } }),
+    // A hair lower, so the hub's two coincident tops do not z-fight.
+    plat(x, z, len, width, y - 0.03, { spin: { rate } }),
+  ];
+}
+
+/**
+ * A rotating bar that sweeps a deck. 1.3 tall -- under the 2.15 jump
+ * clearance, so it is always an obstacle you can hop rather than a wall.
+ */
+function sweeper(x: number, z: number, len: number, y: number, rate: number, phase = 0): BlockDef {
+  return { p: [x, y + 0.65, z], s: [len, 1.3, 0.8], type: S.Wall, spin: { rate, phase } };
+}
+
 const CHAR_TYPES: Record<string, SurfaceType> = {
   '.': S.Normal, '#': S.Wall, 'I': S.Ice, '~': S.Sticky, 'X': S.Crumble,
-  'K': S.Kill, 'O': S.Bumper, 'B': S.Boost, 'S': S.Normal, 'G': S.Normal, 'C': S.Normal,
+  'K': S.Kill, 'B': S.Boost, 'S': S.Normal, 'G': S.Normal, 'C': S.Normal,
+  '^': S.Conveyor, 'v': S.Conveyor, '<': S.Conveyor, '>': S.Conveyor,
+};
+
+/** Belt direction for each conveyor glyph. Up the map is -z. */
+const BELT_DIRS: Record<string, [number, number]> = {
+  '^': [0, -1], 'v': [0, 1], '<': [-1, 0], '>': [1, 0],
 };
 
 interface GridOptions {
@@ -173,10 +242,14 @@ interface GridOptions {
   /** Extra z offset applied to every tile. */
   zOffset?: number;
   wallHeight?: number;
+  /** Surface speed of `^ v < >` belt tiles. */
+  beltSpeed?: number;
 }
 
 /**
  * Builds a level from an ASCII map.
+ *
+ * `^ v < >` are conveyor belts running that way across the map.
  *
  * The last row is nearest the camera, so maps read the way you play them:
  * bottom of the string is where you start, top is where you are going.
@@ -190,6 +263,7 @@ function fromGrid(rows: string[], opts: GridOptions = {}): {
   const cell = opts.cell ?? 3;
   const y = opts.y ?? 0;
   const wallHeight = opts.wallHeight ?? 2.4;
+  const beltSpeed = opts.beltSpeed ?? 6;
   const cols = Math.max(...rows.map((r) => r.length));
   const originX = -((cols - 1) * cell) / 2;
   const originZ = -((rows.length - 1) * cell) + (opts.zOffset ?? 6);
@@ -212,6 +286,9 @@ function fromGrid(rows: string[], opts: GridOptions = {}): {
 
       if (runChar === '#') {
         blocks.push({ p: [cx, y + wallHeight / 2, z], s: [width, wallHeight, cell], type: S.Wall });
+      } else if (BELT_DIRS[runChar]) {
+        const [dx, dz] = BELT_DIRS[runChar];
+        blocks.push(conveyor(cx, z, width, cell, y, [dx * beltSpeed, dz * beltSpeed]));
       } else {
         const type = CHAR_TYPES[runChar] ?? S.Normal;
         blocks.push(plat(cx, z, width, cell, y, { type }));
@@ -230,9 +307,17 @@ function fromGrid(rows: string[], opts: GridOptions = {}): {
       if (ch === 'G') blocks.push(goal(x, z, y, cell * 0.9));
       if (ch === 'C') blocks.push(checkpoint(x, z, y));
       if (ch === 'B') blocks.push(boost(x, z, cell * 0.8, cell * 0.8, y, [0, 0, -1], 16));
+      // A bumper post, pushed into one corner of its tile. It used to be a
+      // bumper-typed *floor* tile: nothing to hit, and it beeped on every
+      // substep you rolled across it. Off-centre leaves a lane either way
+      // (1.5 against a 1.16 marble), however the corridor runs.
+      if (ch === 'O') {
+        const off = 0.5, post = 1.2, h = 2.8;
+        blocks.push({ p: [x - off, y + h / 2, z - off], s: [post, h, post], type: S.Bumper });
+      }
 
       // Normalise markers to plain floor for the run-merge.
-      const merged = ch === 'S' || ch === 'G' || ch === 'C' || ch === 'B' ? '.' : ch;
+      const merged = ch === 'S' || ch === 'G' || ch === 'C' || ch === 'B' || ch === 'O' ? '.' : ch;
       if (merged !== runChar) { flush(c); runStart = c; runChar = merged; }
     }
     flush(cols);
@@ -272,11 +357,19 @@ const l2Deck: BlockDef[] = [
   plat(2, -34, 6, 6),
   plat(8, -28, 5.5, 5.5),
   // Narrow catwalk to the finish.
-  plat(2, -44, 3.4, 14),
+  plat(2, -43.5, 3.4, 13),
   plat(2, -55, 12, 10),
   ...rails(2, -55, 12, 10, 0, 1.6, ['near']),
   goal(2, -56),
 ];
+
+/**
+ * Maze wall height. It has to beat the jump: the ball's underside clears 2.15
+ * at the top of a standing jump, and at the old 1.8 you could hop any wall and
+ * skip the maze. Wall tops are also wide enough to land on, so a wall you can
+ * reach is a road.
+ */
+const MAZE_WALL = 2.6;
 
 // Generated with a recursive-backtracker plus light braiding, then verified by
 // flood fill: 41 tiles from S to G, checkpoint at the halfway point.
@@ -300,7 +393,7 @@ const l3 = fromGrid([
   '#.#####.###',
   '#S#.......#',
   '###########',
-], { cell: 3.2, wallHeight: 1.8 });
+], { cell: 3.2, wallHeight: MAZE_WALL });
 
 const l4Deck: BlockDef[] = (() => {
   const b: BlockDef[] = [];
@@ -330,8 +423,10 @@ const l4Deck: BlockDef[] = (() => {
     if (i === 3) b.push(checkpoint(lx, lz, ly));
     // Hazard rings on the lower turns.
     if (i >= 4) {
-      b.push(pad(lx + 2.6, lz + 2.6, 2.4, ly, S.Kill));
-      b.push(pad(lx - 2.6, lz - 2.6, 2.4, ly, S.Kill));
+      // Pushed out on the goal landing, where 2.6 overlapped the goal pad.
+      const off = i === 7 ? 3.3 : 2.6;
+      b.push(pad(lx + off, lz + off, 2.4, ly, S.Kill));
+      b.push(pad(lx - off, lz - off, 2.4, ly, S.Kill));
     }
   }
 
@@ -339,26 +434,31 @@ const l4Deck: BlockDef[] = (() => {
   return b;
 })();
 
-const l5Deck: BlockDef[] = [
-  plat(0, 8, 12, 12),
-  ...rails(0, 8, 12, 12, 0, 1.6, ['far']),
-  // Long ice straight with a kink -- carry too much speed and you overshoot.
-  plat(0, -8, 9, 22, 0, { type: S.Ice }),
-  wallZ(-4.9, -8, 22),
-  wallZ(4.9, -8, 22),
-  plat(0, -22, 16, 8, 0, { type: S.Ice }),
-  wallX(0, -26.5, 16),
-  checkpoint(-6, -22),
-  // Sticky landing to bleed the speed off.
-  plat(-9, -30, 7, 12, 0, { type: S.Sticky }),
-  plat(-9, -42, 7, 14, 0, { type: S.Ice }),
-  wallZ(-12.9, -42, 14),
-  // Narrow ice bridge over nothing.
-  plat(-9, -54, 3.6, 12, 0, { type: S.Ice }),
-  plat(-9, -64, 12, 10),
-  ...rails(-9, -64, 12, 10, 0, 1.6, ['near']),
-  goal(-9, -65),
-];
+// Rebuilt as a grid so it is all holes: gaps in the floor to steer round,
+// gaps in the walls to slide out of, and almost nothing to brake on. Laid
+// out as slabs it also had every piece overlapping the next, which z-fought.
+const l5 = fromGrid([
+  '  #####  ',
+  '  #.G.#  ',
+  '  #...#  ',
+  '   I I   ',
+  ' IIIIIII ',
+  ' I  I  I ',
+  ' IIIIIII ',
+  '  II II  ',
+  ' ~~~C~~~ ',
+  ' III III ',
+  ' II   II ',
+  ' I  I  I ',
+  '#IIIIIII#',
+  '#II I II ',
+  '#IIIIIII#',
+  ' II I II#',
+  '#IIIIIII#',
+  '#II...II#',
+  '#...S...#',
+  '#########',
+], { cell: 3.2, wallHeight: 1.6 });
 
 const l6Deck: BlockDef[] = [
   plat(0, 8, 12, 12),
@@ -384,13 +484,16 @@ const l7Deck: BlockDef[] = (() => {
   ];
   // A path of crumbling tiles: stop moving and you go through the floor.
   const path: Array<[number, number]> = [
-    [0, -2], [0, -6], [-3, -10], [-3, -14], [0, -18], [3, -22], [3, -26],
+    [0, -2], [0, -6], [-3, -10], [-3, -14], [0, -18], [3, -26],
     [0, -30], [-3, -34], [-3, -38], [0, -42], [3, -46], [0, -50], [0, -54],
   ];
+  // 4 deep on a 4 pitch: neighbours meet edge to edge. At 4.4 they overlapped
+  // and the coplanar tops z-fought.
   for (const [x, z] of path) {
-    b.push(plat(x, z, 4.4, 4.4, 0, { type: S.Crumble }));
+    b.push(plat(x, z, 4.4, 4, 0, { type: S.Crumble }));
   }
-  b.push(plat(3, -22, 4.4, 4.4, 0, { type: S.Normal }));
+  // The one solid tile on the path.
+  b.push(plat(3, -22, 4.4, 4, 0, { type: S.Normal }));
   b.push(checkpoint(3, -22));
   b.push(plat(0, -62, 13, 11));
   b.push(...rails(0, -62, 13, 11, 0, 1.6, ['near']));
@@ -406,9 +509,10 @@ const l8Deck: BlockDef[] = [
   // Table walls with a doorway at each end -- in from the start deck, out to
   // the exit chute. A closed ring here walled the goal off entirely.
   ...rails(0, -20, 30, 44, 0, 2.6, ['near', 'far']),
-  ...railWithGap(0, 1.55, 30, 0, 12, 0, 2.6),
+  // 28.2, not 30: the side rails already fill the corners.
+  ...railWithGap(0, 1.55, 28.2, 0, 12, 0, 2.6),
   // The far end is sealed except for a notch the kicker ramp fires through.
-  ...railWithGap(0, -41.55, 30, 0, 7, 0, 2.6),
+  ...railWithGap(0, -41.55, 28.2, 0, 7, 0, 2.6),
   { p: [-7, 1.4, -8], s: [3, 2.8, 3], type: S.Bumper },
   { p: [6, 1.4, -14], s: [3, 2.8, 3], type: S.Bumper },
   { p: [-4, 1.4, -22], s: [3, 2.8, 3], type: S.Bumper },
@@ -467,7 +571,7 @@ const l9 = fromGrid([
   '###.#.#.#.#.#',
   '#S..#.......#',
   '#############',
-], { cell: 3.2, wallHeight: 1.8 });
+], { cell: 3.2, wallHeight: MAZE_WALL });
 
 const l10Deck: BlockDef[] = (() => {
   const b: BlockDef[] = [
@@ -501,6 +605,153 @@ const l10Deck: BlockDef[] = (() => {
   return b;
 })();
 
+/* -------------------------------------------------------- 11 and beyond */
+
+// Belts, introduced gently: one carries you, three shove you sideways over the
+// void, and the last runs straight at you with nothing either side.
+const l11Deck: BlockDef[] = [
+  plat(0, 8, 12, 12),
+  ...rails(0, 8, 12, 12, 0, 1.6, ['far']),
+  conveyor(0, -9, 6, 22, 0, [0, -7]),
+  wallZ(-3.45, -9, 22, 0, 1.6),
+  wallZ(3.45, -9, 22, 0, 1.6),
+  plat(0, -23.5, 12, 7),
+  ...rails(0, -23.5, 12, 7, 0, 1.6, ['near', 'far']),
+  // Cross-lanes, alternating. Open at both ends: dawdle and you are tipped off.
+  conveyor(0, -30, 16, 6, 0, [6, 0]),
+  conveyor(0, -36, 16, 6, 0, [-6, 0]),
+  conveyor(0, -42, 16, 6, 0, [6, 0]),
+  plat(0, -49, 10, 8),
+  checkpoint(0, -49),
+  // The up-current: narrow, unrailed, running back towards the camera.
+  conveyor(0, -63, 4.5, 20, 0, [0, 5]),
+  plat(0, -78, 12, 10),
+  ...rails(0, -78, 12, 10, 0, 1.6, ['near']),
+  goal(0, -79),
+];
+
+// Turnstiles over the void. Every arm lines up with a bridge four times a
+// revolution; ride to the hub and step off when the next one comes round.
+const l12Deck: BlockDef[] = [
+  plat(0, 8, 12, 12),
+  ...rails(0, 8, 12, 12, 0, 1.6, ['far']),
+  plat(0, -1.3, 4, 6.6),
+  ...turnstile(0, -12, 14, 3.2, 0, 24),
+  plat(0, -23, 4, 7.2),
+  // Second wheel turns the route left.
+  ...turnstile(0, -34, 14, 3.2, 0, -28),
+  plat(-10.7, -34, 6.6, 4),
+  plat(-18, -34, 8, 8),
+  checkpoint(-18, -34),
+  plat(-18, -41.3, 4, 6.6),
+  // The big one. Longer arms, so the tips move faster for the same rate.
+  ...turnstile(-18, -54, 18, 3.4, 0, 20),
+  plat(-18, -69, 12, 11.2),
+  ...rails(-18, -69, 12, 11.2, 0, 1.6, ['near']),
+  goal(-18, -70),
+];
+
+// Sweepers. The first run is railed, so a hit only costs you time. The second
+// is ice with no rails, and a hit there costs you the run.
+const l13Deck: BlockDef[] = [
+  plat(0, 8, 12, 12),
+  ...rails(0, 8, 12, 12, 0, 1.6, ['far']),
+  plat(0, -22, 14, 48),
+  ...rails(0, -22, 14, 48, 0, 2.0, ['near', 'far']),
+  // Radius 6 clears the rails' inner faces at 6.1.
+  sweeper(0, -6, 12, 0, 60),
+  sweeper(0, -18, 12, 0, -75, 45),
+  checkpoint(0, -28),
+  sweeper(0, -37, 12, 0, 90, 90),
+  plat(0, -61, 14, 30, 0, { type: S.Ice }),
+  sweeper(0, -53, 13, 0, 50),
+  sweeper(0, -68, 13, 0, -50, 90),
+  plat(0, -82, 12, 12),
+  ...rails(0, -82, 12, 12, 0, 1.6, ['near']),
+  goal(0, -83),
+];
+
+// A serpentine factory floor. Belts with you, belts against you, and the
+// sticky patches are where you have to turn. The ice row's exit is two tiles
+// short of its end, and the end is a hazard: overshoot and you are done.
+const l14 = fromGrid([
+  '#############',
+  '#G..<<<<<<..#',
+  '###########^#',
+  '#...X.X.>>>.#',
+  '#.###########',
+  '#~~..<<<<C..#',
+  '#########.###',
+  '#.IIIIIIIIIK#',
+  '#.###########',
+  '#..O...>>>..#',
+  '###########.#',
+  '#..<<<<<....#',
+  '#.###########',
+  '#...X.>>>>..#',
+  '###########.#',
+  '#S..>>>>>...#',
+  '#############',
+], { cell: 3.2, wallHeight: MAZE_WALL, beltSpeed: 6 });
+
+// Remix: a launch onto ice, cracked tiles at speed, a turnstile, then a pair
+// of crossing shuttles.
+const l15Deck: BlockDef[] = [
+  plat(0, 8, 12, 12),
+  ...rails(0, 8, 12, 12, 0, 1.6, ['far']),
+  boost(0, 3.5, 6, 3, 0, [0, 0.25, -1], 20),
+  plat(0, -14, 6, 20, 0, { type: S.Ice }),
+  pad(1.8, -10, 2.2, 0, S.Kill),
+  pad(-1.8, -18, 2.2, 0, S.Kill),
+  plat(0, -26.2, 4.4, 4.4, 0, { type: S.Crumble }),
+  plat(0, -30.6, 4.4, 4.4, 0, { type: S.Crumble }),
+  plat(3, -35, 4.4, 4.4, 0, { type: S.Crumble }),
+  plat(3, -39.4, 4.4, 4.4, 0, { type: S.Crumble }),
+  plat(0, -43.8, 4.4, 4.4, 0, { type: S.Crumble }),
+  plat(0, -50.3, 8, 8.6),
+  checkpoint(0, -50.3),
+  ...turnstile(0, -62, 14, 3.2, 0, 30),
+  plat(0, -72.7, 4, 6.6),
+  mover(-8, -79.5, 6, 6, 0, [8, 0, -79.5], 4.0, 0),
+  mover(8, -85.5, 6, 6, 0, [-8, 0, -85.5], 4.0, 0.5),
+  plat(0, -94, 12, 10),
+  ...rails(0, -94, 12, 10, 0, 1.6, ['near']),
+  goal(0, -95),
+];
+
+// The finale. Everything, in order, with checkpoints only where it is fair.
+const l16Deck: BlockDef[] = [
+  plat(0, 8, 12, 12),
+  ...rails(0, 8, 12, 12, 0, 1.6, ['far']),
+  // An escalator up to the sweeper gallery.
+  escalator([0, 0, 2], [0, 4, -12], 5, 8),
+  plat(0, -16, 10, 8, 4),
+  ...rails(0, -16, 10, 8, 4, 1.6, ['near', 'far']),
+  checkpoint(0, -16, 4),
+  plat(0, -30, 12, 20, 4),
+  ...rails(0, -30, 12, 20, 4, 1.6, ['near', 'far']),
+  sweeper(0, -28, 10.6, 4, 80),
+  // Launch off the gallery, down onto cracked tiles.
+  boost(0, -38, 6, 3, 4, [0, 0.3, -1], 21),
+  plat(0, -50.2, 4.4, 4.4, 2, { type: S.Crumble }),
+  plat(2.5, -54.6, 4.4, 4.4, 2, { type: S.Crumble }),
+  plat(0, -59, 4.4, 4.4, 2, { type: S.Crumble }),
+  plat(0, -65.3, 10, 8.2, 2),
+  checkpoint(0, -65.3, 2),
+  // Faster cross-lanes than Assembly Line, and narrower.
+  conveyor(0, -72.4, 12, 5, 2, [8, 0]),
+  conveyor(0, -77.4, 12, 5, 2, [-8, 0]),
+  conveyor(0, -82.4, 12, 5, 2, [8, 0]),
+  ...turnstile(0, -93.3, 16, 3.2, 2, 28),
+  // Ice run down to the goal deck.
+  ramp([0, 2, -101.7], [0, -4, -113.7], 6, { type: S.Ice }),
+  plat(0, -118.7, 14, 10, -4),
+  ...rails(0, -118.7, 14, 10, -4, 2.0, ['near']),
+  { p: [-3.5, -2.6, -116.5], s: [2.4, 2.8, 2.4], type: S.Bumper },
+  { p: [3.5, -2.6, -116.5], s: [2.4, 2.8, 2.4], type: S.Bumper },
+  goal(0, -120.5, -4),
+];
+
 export const LEVELS: LevelDef[] = [
   {
     id: 1, name: 'First Roll',
@@ -528,9 +779,9 @@ export const LEVELS: LevelDef[] = [
   },
   {
     id: 5, name: 'Black Ice',
-    hint: 'No grip. Brake early on the brown patches.',
-    theme: 'ice', par: 100, camYaw: 22, spawn: [0, 2.5, 11],
-    blocks: l5Deck,
+    hint: 'No grip, and holes everywhere. Brake on the brown.',
+    theme: 'ice', par: 100, camYaw: 22,
+    spawn: l5.spawn, blocks: l5.blocks,
   },
   {
     id: 6, name: 'Clockwork',
@@ -561,5 +812,41 @@ export const LEVELS: LevelDef[] = [
     hint: 'All the way down. Do not stop.',
     theme: 'ember', par: 150, camYaw: 28, spawn: [0, 42.5, 10],
     blocks: l10Deck,
+  },
+  {
+    id: 11, name: 'Assembly Line',
+    hint: 'Belts carry you. The last one is against you.',
+    theme: 'foundry', par: 75, camYaw: 22, spawn: [0, 2.5, 11],
+    blocks: l11Deck,
+  },
+  {
+    id: 12, name: 'Turnstile',
+    hint: 'Ride to the hub. Step off when an arm lines up.',
+    theme: 'aurora', par: 90, camYaw: 22, camDistance: 16.5, camHeight: 13.5,
+    spawn: [0, 2.5, 11], blocks: l12Deck,
+  },
+  {
+    id: 13, name: 'Sweepers',
+    hint: 'Time the arms, or jump them.',
+    theme: 'void', par: 80, camYaw: 22, spawn: [0, 2.5, 11],
+    blocks: l13Deck,
+  },
+  {
+    id: 14, name: 'Factory Floor',
+    hint: 'Some belts help. Most do not.',
+    theme: 'foundry', par: 140, camYaw: 18, camDistance: 16.5, camHeight: 13.5,
+    spawn: l14.spawn, blocks: l14.blocks,
+  },
+  {
+    id: 15, name: 'Slipstream',
+    hint: 'Ride the launch. Never stop on the cracks.',
+    theme: 'neon', par: 105, camYaw: 22, spawn: [0, 2.5, 11],
+    blocks: l15Deck,
+  },
+  {
+    id: 16, name: 'Overdrive',
+    hint: 'Everything you have learned. Go.',
+    theme: 'solar', par: 120, camYaw: 24, camDistance: 16.5, camHeight: 13.5,
+    spawn: [0, 2.5, 11], blocks: l16Deck,
   },
 ];
